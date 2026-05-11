@@ -68,6 +68,21 @@ export default function AdminConfigHomePage() {
             </Button>
           </CardContent>
         </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>{COPY.admin.config.cards.horarios.title}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            <p className="text-muted-foreground">
+              {COPY.admin.config.cards.horarios.desc}
+            </p>
+            <Button asChild size="sm">
+              <Link href="/admin/config/horarios">
+                {COPY.admin.config.cards.horarios.cta}
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

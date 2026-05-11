@@ -2,7 +2,13 @@ import "server-only";
 
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/db/client";
-import { barberos, preciosBarberoServicio, servicios } from "@/db/schema";
+import {
+  barberos,
+  diasDescansoRecurrente,
+  horariosOperacion,
+  preciosBarberoServicio,
+  servicios,
+} from "@/db/schema";
 import type { Barbero, Servicio } from "@/db/schema";
 
 /**
@@ -113,4 +119,78 @@ export async function getMatrizPrecios(): Promise<MatrizPreciosData> {
     servicios: serviciosRows,
     precios,
   };
+}
+
+export type RangoHorario = {
+  /** "HH:MM" — sin segundos. */
+  apertura: string;
+  /** "HH:MM" — sin segundos. */
+  cierre: string;
+};
+
+export type HorariosConfigData = {
+  /**
+   * Para cada día de semana (0..6), si está abierto y qué rangos tiene.
+   * Un día "abierto" tiene al menos un rango. Un día sin rangos y sin entry
+   * en diasDescansoRecurrente se considera cerrado por omisión (no debería pasar,
+   * pero el editor lo normaliza al guardar).
+   */
+  dias: Record<
+    number,
+    {
+      abierto: boolean;
+      rangos: RangoHorario[];
+    }
+  >;
+};
+
+/**
+ * Truncamos "HH:MM:SS" → "HH:MM" para el editor. La capa de persistencia vuelve
+ * a agregar ":00" antes de insertar, para mantener consistencia con el seed
+ * ("10:00:00") y simplificar diffs.
+ */
+function trimSeconds(hhmmss: string): string {
+  const parts = hhmmss.split(":");
+  const hh = (parts[0] ?? "00").padStart(2, "0");
+  const mm = (parts[1] ?? "00").padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+export async function getHorariosConfig(): Promise<HorariosConfigData> {
+  const [rangosRows, descansosRows] = await Promise.all([
+    db
+      .select({
+        diaSemana: horariosOperacion.diaSemana,
+        apertura: horariosOperacion.apertura,
+        cierre: horariosOperacion.cierre,
+      })
+      .from(horariosOperacion)
+      .where(eq(horariosOperacion.activo, true))
+      .orderBy(asc(horariosOperacion.diaSemana), asc(horariosOperacion.apertura)),
+    db
+      .select({ diaSemana: diasDescansoRecurrente.diaSemana })
+      .from(diasDescansoRecurrente),
+  ]);
+
+  const descansoSet = new Set(descansosRows.map((d) => d.diaSemana));
+  const rangosPorDia = new Map<number, RangoHorario[]>();
+  for (const r of rangosRows) {
+    const list = rangosPorDia.get(r.diaSemana) ?? [];
+    list.push({
+      apertura: trimSeconds(r.apertura),
+      cierre: trimSeconds(r.cierre),
+    });
+    rangosPorDia.set(r.diaSemana, list);
+  }
+
+  const dias: HorariosConfigData["dias"] = {};
+  for (let d = 0; d <= 6; d++) {
+    const rangos = rangosPorDia.get(d) ?? [];
+    // "Abierto" = no está en la tabla de descanso recurrente. Los rangos pueden
+    // estar vacíos en el caso degenerado (el editor obliga >= 1 al guardar).
+    const abierto = !descansoSet.has(d) && rangos.length > 0;
+    dias[d] = { abierto, rangos };
+  }
+
+  return { dias };
 }

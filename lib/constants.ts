@@ -58,6 +58,11 @@ export const COPY = {
           desc: "Matriz de precios por barbero y servicio. Si una celda queda vacía, ese barbero no ofrece ese servicio.",
           cta: "Administrar",
         },
+        horarios: {
+          title: "Horarios y descansos",
+          desc: "Qué días abre la barbería y en qué franjas horarias. Los días no marcados quedan como descanso recurrente.",
+          cta: "Administrar",
+        },
       },
     },
     servicios: {
@@ -128,9 +133,54 @@ export const COPY = {
       errorGuardado: "No pudimos guardar los cambios. Probá de nuevo.",
       precioInvalido: "El precio debe ser un número entre 0 y 9.999.999,99.",
     },
+    horarios: {
+      title: "Horarios y descansos",
+      eyebrow: "Configuración",
+      subtitle:
+        "Definí qué días abre la barbería y en qué franjas horarias. Los días sin marcar como abiertos quedan como descanso recurrente y no aparecen en la reserva.",
+      diaCerrado: "Cerrado",
+      diaAbierto: "Abierto",
+      agregarRango: "Agregar rango",
+      eliminarRango: "Eliminar rango",
+      apertura: "Apertura",
+      cierre: "Cierre",
+      sinRangos:
+        "Sin franjas cargadas. Agregá al menos una para que el día quede abierto.",
+      errorRangoInvalido: "La apertura debe ser anterior al cierre.",
+      errorRangoSolapado: "Los rangos no pueden solaparse dentro del mismo día.",
+      errorRangoFaltante:
+        "Si el día está abierto necesita al menos un rango horario.",
+      cambiosPendientes: (n: number) =>
+        n === 1 ? "1 día con cambios" : `${n} días con cambios`,
+      sinCambios: "Sin cambios pendientes",
+      guardar: "Guardar cambios",
+      guardando: "Guardando...",
+      descartar: "Descartar cambios",
+      guardadoOk: "Cambios guardados.",
+      errorGuardado: "No pudimos guardar los cambios. Probá de nuevo.",
+    },
     estados: {
       activo: "Activo",
       inactivo: "Inactivo",
     },
   },
 } as const;
+
+/**
+ * Días de la semana en español, índice 0=Domingo .. 6=Sábado
+ * (convención JS / Postgres `date_part('dow')`).
+ */
+export const DIAS_SEMANA_ES = [
+  "Domingo",
+  "Lunes",
+  "Martes",
+  "Miércoles",
+  "Jueves",
+  "Viernes",
+  "Sábado",
+] as const;
+
+/**
+ * Orden visual del editor: lunes → domingo (convención local, distinto al índice JS).
+ */
+export const DIAS_SEMANA_ORDEN_LUN_DOM = [1, 2, 3, 4, 5, 6, 0] as const;
