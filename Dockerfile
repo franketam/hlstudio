@@ -8,7 +8,11 @@ WORKDIR /app
 # --- deps layer ---
 FROM base AS deps
 COPY package.json package-lock.json* ./
-RUN npm ci --no-audit --no-fund
+# Forzamos NODE_ENV=development e --include=dev para asegurar que devDeps
+# (typescript, eslint, tailwind, tsx, drizzle-kit) se instalen incluso si
+# Coolify inyecta NODE_ENV=production como ENV antes de este step.
+ENV NODE_ENV=development
+RUN npm ci --include=dev --no-audit --no-fund
 
 # --- build layer ---
 FROM base AS builder
