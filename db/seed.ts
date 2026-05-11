@@ -15,7 +15,7 @@ import * as path from "node:path";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { and, eq } from "drizzle-orm";
-import * as schema from "@/db/schema";
+import * as schema from "./schema";
 
 // Cargar .env.local manualmente (corre fuera de Next).
 const envPath = path.resolve(process.cwd(), ".env.local");

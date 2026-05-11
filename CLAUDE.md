@@ -65,7 +65,13 @@ npm run dev
    - `NEXT_PUBLIC_APP_URL` — la URL pública de la app
    - `TIMEZONE=America/Argentina/Buenos_Aires`
 4. **Healthcheck path**: `/api/health` (devuelve 200 + JSON).
-5. **Post-deploy hook** (opcional): `npm run db:migrate` para auto-aplicar migraciones nuevas. Si no, ejecutar manual via Coolify shell.
+5. **Migraciones / seed en producción**: en el shell de Coolify (`/app`) correr:
+   ```sh
+   node scripts/migrate.mjs   # aplica /drizzle/*.sql
+   node scripts/seed.mjs      # idempotente — barberos, servicios, precios, horarios
+   ```
+   Esos `.mjs` se generan en build-time con esbuild (bundle autosuficiente, sin tsx ni tsconfig).
+   No usar `npm run db:migrate` en runtime: requiere tsx (devDep) que no está en la imagen final.
 
 ## Convenciones
 

@@ -11,6 +11,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx ./db/migrate.ts",
     "db:seed": "tsx ./db/seed.ts",
+    "db:migrate:prod": "node scripts/migrate.mjs",
+    "db:seed:prod": "node scripts/seed.mjs",
     "db:studio": "drizzle-kit studio",
     "db:push": "drizzle-kit push"
   },

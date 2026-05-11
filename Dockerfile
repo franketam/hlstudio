@@ -28,6 +28,14 @@ ENV SESSION_PASSWORD=placeholder_placeholder_placeholder_xxx
 ENV CANCEL_TOKEN_SECRET=placeholder_placeholder_placeholder_xxx
 RUN npm run build
 
+# Bundle scripts CLI (migrate / seed) a .mjs autosuficientes que se ejecutan
+# en runtime con `node` puro — sin tsx, sin tsconfig, sin path aliases.
+# esbuild viene como dep transitiva de tsx (devDep), así que ya está en node_modules.
+RUN node_modules/.bin/esbuild db/migrate.ts db/seed.ts \
+    --bundle --platform=node --format=esm --target=node22 \
+    --outdir=dist/scripts --out-extension:.js=.mjs \
+    --tsconfig=tsconfig.json
+
 # --- runtime layer ---
 FROM base AS runner
 ENV NODE_ENV=production
@@ -44,6 +52,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/drizzle ./drizzle
 COPY --from=builder --chown=nextjs:nodejs /app/db ./db
 COPY --from=builder --chown=nextjs:nodejs /app/lib ./lib
+COPY --from=builder --chown=nextjs:nodejs /app/dist/scripts ./scripts
 COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
 
 USER nextjs
