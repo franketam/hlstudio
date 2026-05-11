@@ -72,8 +72,13 @@ export default async function AdminHomePage() {
           <CardHeader>
             <CardTitle>Configuración</CardTitle>
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
-            Barberos, servicios, precios y horarios. Sprint 2.
+          <CardContent className="space-y-3 text-sm">
+            <p className="text-muted-foreground">
+              Servicios y barberos. Precios y horarios próximamente.
+            </p>
+            <Button asChild size="sm">
+              <Link href="/admin/config">Administrar</Link>
+            </Button>
           </CardContent>
         </Card>
       </div>
