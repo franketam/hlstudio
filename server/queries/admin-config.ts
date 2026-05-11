@@ -1,9 +1,10 @@
 import "server-only";
 
-import { asc, eq } from "drizzle-orm";
+import { asc, desc, eq, gte, lt } from "drizzle-orm";
 import { db } from "@/db/client";
 import {
   barberos,
+  bloqueosAgenda,
   diasDescansoRecurrente,
   horariosOperacion,
   preciosBarberoServicio,
@@ -193,4 +194,61 @@ export async function getHorariosConfig(): Promise<HorariosConfigData> {
   }
 
   return { dias };
+}
+
+export type BloqueoVigente = {
+  id: string;
+  barberoId: string | null;
+  barberoNombre: string | null;
+  desdeTs: Date;
+  hastaTs: Date;
+  motivo: string | null;
+};
+
+/**
+ * Bloqueos cuyo `hasta_ts` es futuro respecto de "ahora" — incluye los activos
+ * (ya empezaron pero no terminaron) y los próximos. Se ordenan por desde_ts
+ * ascendente para que el admin vea primero "lo más cercano".
+ */
+export async function listBloqueosVigentes(): Promise<BloqueoVigente[]> {
+  const now = new Date();
+  const rows = await db
+    .select({
+      id: bloqueosAgenda.id,
+      barberoId: bloqueosAgenda.barberoId,
+      barberoNombre: barberos.nombre,
+      desdeTs: bloqueosAgenda.desdeTs,
+      hastaTs: bloqueosAgenda.hastaTs,
+      motivo: bloqueosAgenda.motivo,
+    })
+    .from(bloqueosAgenda)
+    .leftJoin(barberos, eq(barberos.id, bloqueosAgenda.barberoId))
+    .where(gte(bloqueosAgenda.hastaTs, now))
+    .orderBy(asc(bloqueosAgenda.desdeTs));
+  return rows;
+}
+
+/**
+ * Pasados — opcional para auditoría. No se usa por default en la UI pero
+ * dejamos la query lista para activarla con un toggle si hace falta.
+ */
+export async function listBloqueosPasados(
+  limit = 50
+): Promise<BloqueoVigente[]> {
+  const now = new Date();
+  const rows = await db
+    .select({
+      id: bloqueosAgenda.id,
+      barberoId: bloqueosAgenda.barberoId,
+      barberoNombre: barberos.nombre,
+      desdeTs: bloqueosAgenda.desdeTs,
+      hastaTs: bloqueosAgenda.hastaTs,
+      motivo: bloqueosAgenda.motivo,
+    })
+    .from(bloqueosAgenda)
+    .leftJoin(barberos, eq(barberos.id, bloqueosAgenda.barberoId))
+    .where(lt(bloqueosAgenda.hastaTs, now))
+    .orderBy(desc(bloqueosAgenda.desdeTs))
+    .limit(limit);
+  return rows;
 }

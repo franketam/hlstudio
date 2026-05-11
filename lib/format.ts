@@ -66,6 +66,51 @@ export function horaCortaAR(d: Date | string): string {
   return tzFormat(date, "HH:mm", { timeZone: TZ });
 }
 
+const MESES_CORTOS = [
+  "ene",
+  "feb",
+  "mar",
+  "abr",
+  "may",
+  "jun",
+  "jul",
+  "ago",
+  "sep",
+  "oct",
+  "nov",
+  "dic",
+];
+
+/**
+ * Formatea un Date como "Mar 12 may" en TZ local. Para fila de bloqueos.
+ */
+export function fechaCortaAR(d: Date | string): string {
+  const date = typeof d === "string" ? new Date(d) : d;
+  const local = toZonedTime(date, TZ);
+  const dia = DIAS_CORTOS[local.getDay()] ?? "";
+  const num = local.getDate();
+  const mes = MESES_CORTOS[local.getMonth()] ?? "";
+  return `${dia} ${num} ${mes}`;
+}
+
+/**
+ * Formatea un rango de bloqueo "[desdeTs, hastaTs)" como
+ * - "Mar 12 may" si cubre exactamente un día local
+ * - "Lun 18 may → Vie 22 may" para rangos de varios días
+ *
+ * El rango es semi-abierto (hastaTs es exclusivo), así que el último día
+ * visible es hastaTs - 1ms en TZ local.
+ */
+export function formatBloqueoRango(desdeTs: Date, hastaTs: Date): string {
+  const ultimoDia = new Date(hastaTs.getTime() - 1);
+  const desdeYmd = ymdLocal(desdeTs);
+  const ultimoYmd = ymdLocal(ultimoDia);
+  if (desdeYmd === ultimoYmd) {
+    return fechaCortaAR(desdeTs);
+  }
+  return `${fechaCortaAR(desdeTs)} → ${fechaCortaAR(ultimoDia)}`;
+}
+
 /**
  * Devuelve "YYYY-MM-DD" en TZ local. Sirve como input estable para el calendario.
  */

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, lt, or, sql as dsql } from "drizzle-orm";
+import { and, eq, gte, isNull, lt, lte, or, sql as dsql } from "drizzle-orm";
 import { fromZonedTime, toZonedTime } from "date-fns-tz";
 import { db } from "@/db/client";
 import {
@@ -237,10 +237,12 @@ function formatHHmmInTz(date: Date, tz: string): string {
 export { parseTimeOnDate, formatHHmmInTz };
 
 // Helper que el flujo de UI necesita: dado un fecha "YYYY-MM-DD",
-// determinar si el local atiende ese día (hay rangos y no es descanso).
+// determinar si el local atiende ese día (hay rangos, no es descanso, y no hay
+// un bloqueo global que cubra el día entero).
 export async function isDiaAbierto(fecha: string): Promise<boolean> {
   const tz = env.TIMEZONE;
   const dayStartUTC = fromZonedTime(`${fecha}T00:00:00`, tz);
+  const dayEndUTC = new Date(dayStartUTC.getTime() + 24 * 60 * 60 * 1000);
   const diaSemana = toZonedTime(dayStartUTC, tz).getDay();
 
   const [descanso] = await db
@@ -260,7 +262,23 @@ export async function isDiaAbierto(fecha: string): Promise<boolean> {
       )
     )
     .limit(1);
+  if (rangos.length === 0) return false;
 
-  return rangos.length > 0;
+  // Bloqueo global (barbero_id IS NULL) que cubre el día completo:
+  // desdeTs <= dayStart  AND  hastaTs >= dayEnd.
+  const [bloqueoGlobal] = await db
+    .select({ id: bloqueosAgenda.id })
+    .from(bloqueosAgenda)
+    .where(
+      and(
+        isNull(bloqueosAgenda.barberoId),
+        lte(bloqueosAgenda.desdeTs, dayStartUTC),
+        gte(bloqueosAgenda.hastaTs, dayEndUTC)
+      )
+    )
+    .limit(1);
+  if (bloqueoGlobal) return false;
+
+  return true;
 }
 

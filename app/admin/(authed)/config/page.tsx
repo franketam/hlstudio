@@ -83,6 +83,21 @@ export default function AdminConfigHomePage() {
             </Button>
           </CardContent>
         </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>{COPY.admin.config.cards.bloqueos.title}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            <p className="text-muted-foreground">
+              {COPY.admin.config.cards.bloqueos.desc}
+            </p>
+            <Button asChild size="sm">
+              <Link href="/admin/config/bloqueos">
+                {COPY.admin.config.cards.bloqueos.cta}
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
