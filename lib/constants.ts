@@ -41,7 +41,7 @@ export const COPY = {
       title: "Configuración",
       eyebrow: "Panel",
       subtitle:
-        "Administrá los servicios que ofrece la barbería y los barberos del equipo.",
+        "Administrá los servicios que ofrece la barbería, el equipo de barberos y los precios.",
       cards: {
         servicios: {
           title: "Servicios",
@@ -51,6 +51,11 @@ export const COPY = {
         barberos: {
           title: "Barberos",
           desc: "Equipo visible en la reserva. Foto, descripción y email de aviso.",
+          cta: "Administrar",
+        },
+        precios: {
+          title: "Precios",
+          desc: "Matriz de precios por barbero y servicio. Si una celda queda vacía, ese barbero no ofrece ese servicio.",
           cta: "Administrar",
         },
       },
@@ -99,6 +104,29 @@ export const COPY = {
         ordenHint:
           "Posición en el listado. Menor número aparece primero (0 = primero).",
       },
+    },
+    precios: {
+      title: "Precios",
+      eyebrow: "Configuración",
+      subtitle:
+        "Cargá el precio de cada servicio para cada barbero. Si una celda queda vacía, ese servicio no aparece en la reserva con ese barbero.",
+      sinBarberos:
+        "Todavía no hay barberos activos. Activá al menos un barbero para cargar precios.",
+      sinServicios:
+        "Todavía no hay servicios activos. Activá al menos un servicio para cargar precios.",
+      headerBarbero: "Barbero",
+      placeholderVacio: "—",
+      hintCeldaVacia:
+        "Sin precio → no aparecerá en la reserva con este barbero.",
+      cambiosPendientes: (n: number) =>
+        n === 1 ? "1 cambio sin guardar" : `${n} cambios sin guardar`,
+      sinCambios: "Sin cambios pendientes",
+      guardar: "Guardar cambios",
+      guardando: "Guardando...",
+      descartar: "Descartar cambios",
+      guardadoOk: "Cambios guardados.",
+      errorGuardado: "No pudimos guardar los cambios. Probá de nuevo.",
+      precioInvalido: "El precio debe ser un número entre 0 y 9.999.999,99.",
     },
     estados: {
       activo: "Activo",
