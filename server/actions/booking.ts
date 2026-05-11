@@ -13,6 +13,10 @@ import {
 import { buildCancelToken, verifyCancelToken } from "@/lib/cancel-token";
 import { normalizarTelefonoAR } from "@/lib/phone";
 import { rangesOverlap } from "@/lib/availability";
+import {
+  RATE_LIMITS,
+  checkRateLimitForRoute,
+} from "@/lib/rate-limit";
 import { sendConfirmacionEmails } from "@/server/email/send-confirmacion";
 
 /**
@@ -42,6 +46,11 @@ export type CreateTurnoOk = {
 
 const VENTANA_CANCEL_HORAS = 3;
 
+// Margen de gracia para clock skew entre cliente / servidor (validación de pasado).
+const GRACIA_CLOCK_SKEW_MS = 5 * 60 * 1000;
+// Cuota máxima de adelanto: 90 días. Evita reservar en horizontes irreales.
+const MAX_ADELANTO_DIAS = 90;
+
 /**
  * Crea un turno con anti-doble-booking server-side.
  *
@@ -56,6 +65,22 @@ const VENTANA_CANCEL_HORAS = 3;
 export async function createTurno(
   input: CreateTurnoInput
 ): Promise<ActionResult<CreateTurnoOk>> {
+  // Rate limit: 5 turnos por IP por hora. Endpoint público, target de abuso.
+  const rl = await checkRateLimitForRoute(
+    "reservar",
+    RATE_LIMITS.CREATE_TURNO.limit,
+    RATE_LIMITS.CREATE_TURNO.windowMs
+  );
+  if (!rl.ok) {
+    return {
+      ok: false,
+      error: {
+        code: "rate_limited",
+        message: "Demasiados intentos. Probá en un rato.",
+      },
+    };
+  }
+
   const parsed = createTurnoSchema.safeParse(input);
   if (!parsed.success) {
     const first = parsed.error.issues[0];
@@ -78,12 +103,25 @@ export async function createTurno(
       error: { code: "validation_error", message: "Fecha/hora inválida." },
     };
   }
-  if (inicio.getTime() <= Date.now()) {
+  // Validación de pasado con 5 min de gracia para clock skew.
+  if (inicio.getTime() <= Date.now() - GRACIA_CLOCK_SKEW_MS) {
     return {
       ok: false,
       error: {
         code: "slot_pasado",
         message: "Ese horario ya pasó. Elegí otro.",
+      },
+    };
+  }
+  // Sanity: no permitir agendar más de 90 días en el futuro.
+  const maxFuturoMs =
+    Date.now() + MAX_ADELANTO_DIAS * 24 * 60 * 60 * 1000;
+  if (inicio.getTime() > maxFuturoMs) {
+    return {
+      ok: false,
+      error: {
+        code: "slot_demasiado_lejos",
+        message: `No se puede reservar con más de ${MAX_ADELANTO_DIAS} días de anticipación.`,
       },
     };
   }
@@ -305,8 +343,25 @@ export async function createTurno(
 export async function cancelTurno(
   token: string
 ): Promise<ActionResult<{ turnoId: string }>> {
+  // Rate limit: 20 cancelaciones por IP por hora. Limita fuzzing del token.
+  const rl = await checkRateLimitForRoute(
+    "cancelar",
+    RATE_LIMITS.CANCEL_TURNO.limit,
+    RATE_LIMITS.CANCEL_TURNO.windowMs
+  );
+  if (!rl.ok) {
+    return {
+      ok: false,
+      error: {
+        code: "rate_limited",
+        message: "Demasiados intentos. Probá en un rato.",
+      },
+    };
+  }
+
   const parsed = verifyCancelToken(token);
   if (!parsed) {
+    console.warn("[security] cancel_token_invalido");
     return {
       ok: false,
       error: { code: "token_invalido", message: "Link inválido o vencido." },

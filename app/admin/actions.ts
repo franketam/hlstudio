@@ -4,6 +4,11 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { env } from "@/lib/env";
 import { verifyPassword } from "@/lib/password";
+import {
+  RATE_LIMITS,
+  checkRateLimitForRoute,
+  getClientIp,
+} from "@/lib/rate-limit";
 import { destroySession, getMutableSession } from "@/lib/session";
 
 /**
@@ -23,6 +28,22 @@ export async function loginAction(
   _prev: ActionResult | null,
   formData: FormData
 ): Promise<ActionResult> {
+  // Rate limit: 10 intentos por IP cada 15 min. Limita brute-force.
+  const rl = await checkRateLimitForRoute(
+    "login",
+    RATE_LIMITS.LOGIN.limit,
+    RATE_LIMITS.LOGIN.windowMs
+  );
+  if (!rl.ok) {
+    return {
+      ok: false,
+      error: {
+        code: "rate_limited",
+        message: "Demasiados intentos. Probá en un rato.",
+      },
+    };
+  }
+
   const parsed = loginSchema.safeParse({
     email: formData.get("email"),
     password: formData.get("password"),
@@ -47,6 +68,8 @@ export async function loginAction(
   const passwordMatch = await verifyPassword(password, env.ADMIN_PASSWORD_HASH);
 
   if (!emailMatch || !passwordMatch) {
+    const ip = await getClientIp();
+    console.warn(`[security] login_failure ip=${ip}`);
     // Mensaje genérico para no revelar cuál falló.
     return {
       ok: false,

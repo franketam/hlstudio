@@ -89,6 +89,33 @@ npm run dev
   - `components/brand/` — logo, avatar, etc.
   - `drizzle/` — migraciones SQL (generadas, NO editar a mano)
 
+## Verificación de dominio Resend (CHECKLIST PRE-LANZAMIENTO)
+
+Dominio comprado: `hlstudio.com.ar`. From oficial: `reservas@hlstudio.com.ar`.
+
+Mientras no esté verificado, mantener `RESEND_FROM_EMAIL=onboarding@resend.dev` en `.env.local` y Coolify. Sin verificación los emails se bloquean o van a spam para cualquier destinatario distinto del owner de la cuenta Resend.
+
+```
+[ ] 1. Ir a Resend dashboard → Domains → Add → hlstudio.com.ar
+[ ] 2. Copiar los 3 DNS records (SPF, DKIM, return-path) y cargarlos en el proveedor del dominio.
+[ ] 3. Esperar verificación (puede tardar minutos a horas).
+[ ] 4. Cambiar RESEND_FROM_EMAIL=reservas@hlstudio.com.ar en Coolify env vars.
+[ ] 5. Redeploy.
+[ ] 6. Probar envío real desde un turno de prueba.
+[ ] 7. Verificar que NO llega a spam (mandate uno a vos mismo, gmail/outlook).
+```
+
+## Hardening de seguridad
+
+- **Rate limiting** in-memory por IP en endpoints públicos (`lib/rate-limit.ts`):
+  - `reservar` (create turno): 5 / IP / hora.
+  - `login` (admin): 10 / IP / 15 min.
+  - `cancelar` (turno): 20 / IP / hora.
+  - Los límites viven como constantes en `RATE_LIMITS` en `lib/rate-limit.ts`.
+- **Security headers** en `next.config.ts`: X-Frame-Options DENY, X-Content-Type-Options nosniff, Referrer-Policy strict-origin-when-cross-origin, Permissions-Policy (cámara/mic/geo denegados), HSTS 1 año. CSP queda pendiente para Sprint 3 (requiere auditar inline scripts/styles de Next).
+- **Cancel token**: HMAC-SHA256 con `CANCEL_TOKEN_SECRET`, verificación con `timingSafeEqual` (`lib/cancel-token.ts`).
+- **Logs de seguridad** con prefijo `[security]` (rate limit hits, login failures, cancel token inválido). Visibles en Coolify logs para auditar.
+
 ## Anti-doble-booking
 
 Decisión: validación a nivel server (transacción + check) en Sprint 1.
