@@ -12,6 +12,8 @@ export const metadata = {
   title: "Elegir servicio",
 };
 
+export const dynamic = "force-dynamic";
+
 type SearchParams = Promise<{
   barbero?: string;
 }>;

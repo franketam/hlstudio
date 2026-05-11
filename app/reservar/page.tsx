@@ -7,6 +7,8 @@ export const metadata = {
   title: "Reservar turno",
 };
 
+export const dynamic = "force-dynamic";
+
 export default async function ReservarPaso1Page() {
   const barberosLista = await listBarberosActivos();
 

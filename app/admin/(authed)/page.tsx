@@ -8,6 +8,8 @@ export const metadata = {
   title: "Panel",
 };
 
+export const dynamic = "force-dynamic";
+
 /**
  * Dashboard del admin. En Sprint 1 muestra un resumen del día y un link rápido
  * a la agenda. Sprint 2 agrega ficha de cliente, CRUDs y bloqueos.

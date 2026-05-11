@@ -18,6 +18,8 @@ export const metadata = {
   title: "Elegir día y hora",
 };
 
+export const dynamic = "force-dynamic";
+
 const DIAS_VENTANA = 14;
 
 type SearchParams = Promise<{

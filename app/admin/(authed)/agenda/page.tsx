@@ -15,6 +15,8 @@ export const metadata = {
   title: "Agenda",
 };
 
+export const dynamic = "force-dynamic";
+
 type SearchParams = Promise<{ fecha?: string }>;
 
 export default async function AdminAgendaPage({

@@ -23,6 +23,8 @@ export const metadata = {
   title: "Tu turno",
 };
 
+export const dynamic = "force-dynamic";
+
 const VENTANA_CANCEL_HORAS = 3;
 
 type Params = Promise<{ token: string }>;

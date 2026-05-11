@@ -19,7 +19,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # necesitamos algunas placeholders para que `next build` no explote.
 ENV DATABASE_URL=postgresql://placeholder:placeholder@placeholder:5432/placeholder
 ENV ADMIN_EMAIL=placeholder@example.com
-ENV ADMIN_PASSWORD_HASH=scrypt$0000$0000
+ENV ADMIN_PASSWORD_HASH=placeholder_build_time_only_replace_in_runtime
 ENV SESSION_PASSWORD=placeholder_placeholder_placeholder_xxx
 ENV CANCEL_TOKEN_SECRET=placeholder_placeholder_placeholder_xxx
 RUN npm run build
