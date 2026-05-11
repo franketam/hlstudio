@@ -11,6 +11,12 @@ type LogoProps = {
   priority?: boolean;
 };
 
+// Aspect ratio real del asset (logo.png / logo-white.png son 1076x873).
+// Hardcodeado para que Next.js reserve la altura correcta y evite CLS.
+// Si cambia el asset, actualizar estos valores.
+const LOGO_INTRINSIC_WIDTH = 1076;
+const LOGO_INTRINSIC_HEIGHT = 873;
+
 /**
  * Logo de HLstudio. Sirve dos variantes según el fondo.
  * Los archivos viven en /public — `logo.png` para fondos claros,
@@ -23,7 +29,11 @@ export function Logo({
   priority,
 }: LogoProps) {
   const src = variant === "light" ? "/logo-white.png" : "/logo.png";
-  const height = Math.round(width); // aspecto cuadrado aproximado; ajustá si el asset cambia
+  const height = Math.round((width * LOGO_INTRINSIC_HEIGHT) / LOGO_INTRINSIC_WIDTH);
+  // `sizes` evita que next/image genere/sirva una variante más grande de la
+  // necesaria (sin esto, el srcset incluye `w=256` y el browser puede pedirla
+  // aunque solo necesite ~88px). Mejora LCP del logo en mobile.
+  const sizes = `${width * 2}px`;
   return (
     <Image
       src={src}
@@ -31,7 +41,8 @@ export function Logo({
       width={width}
       height={height}
       priority={priority}
-      className={cn("select-none", className)}
+      sizes={sizes}
+      className={cn("h-auto select-none", className)}
     />
   );
 }

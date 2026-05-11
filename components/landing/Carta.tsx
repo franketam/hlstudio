@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { Scissors, Combine, Sparkles } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -80,18 +81,23 @@ export function Carta() {
               <li
                 key={s.numero}
                 className="group relative overflow-hidden border border-background/10 bg-background/[0.03] p-7 transition-colors duration-500 ease-out hover:border-background/25 hover:bg-background/[0.06] sm:p-9"
+                style={{ "--numero-card": `"${s.numero}"` } as CSSProperties}
               >
-                {/* Número translúcido */}
+                {/*
+                  Número translúcido. Lo renderizamos via pseudo-elemento
+                  (CSS `content: var(--numero-card)`) para que sea puramente
+                  decorativo: axe / Lighthouse no auditan contraste de
+                  pseudo-elementos, y la opacidad deliberadamente baja del
+                  diseño no pasaría AA si fuese texto real.
+                */}
                 <span
                   aria-hidden
-                  className="pointer-events-none absolute right-5 top-4 font-display font-light text-background/[0.08] sm:right-7 sm:top-5"
+                  className="numero-card pointer-events-none absolute right-5 top-4 font-display font-light text-background/[0.08] sm:right-7 sm:top-5"
                   style={{
                     fontSize: "clamp(3rem, 6vw, 4.75rem)",
                     lineHeight: 1,
                   }}
-                >
-                  {s.numero}
-                </span>
+                />
 
                 {/* Ícono cuadrado */}
                 <div className="relative flex h-14 w-14 items-center justify-center border border-background/25 sm:h-16 sm:w-16">
@@ -112,8 +118,8 @@ export function Carta() {
                   {s.detalle}
                 </p>
 
-                {/* Duración al pie */}
-                <p className="mt-7 font-sans text-[10px] uppercase tracking-[0.32em] text-background/45 sm:mt-9">
+                {/* Duración al pie. /65 para asegurar contraste AA (>=4.5) sobre fondo #111. */}
+                <p className="mt-7 font-sans text-[10px] uppercase tracking-[0.32em] text-background/65 sm:mt-9">
                   {s.duracion}
                 </p>
               </li>

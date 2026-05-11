@@ -44,7 +44,8 @@ export function Barberos() {
                 tone="dark"
               />
 
-              <p className="mt-10 font-sans text-[10px] uppercase tracking-[0.4em] text-foreground/45">
+              {/* /65 para garantizar contraste AA (>=4.5) en texto chico sobre #fafafa. */}
+              <p className="mt-10 font-sans text-[10px] uppercase tracking-[0.4em] text-foreground/65">
                 {b.numero}
               </p>
               <h3 className="mt-3 font-display text-3xl font-light tracking-tightest text-foreground sm:text-4xl">

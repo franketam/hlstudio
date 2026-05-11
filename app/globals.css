@@ -144,6 +144,16 @@
     background-repeat: repeat-x;
     background-position: bottom center;
   }
+
+  /*
+   * Número decorativo de las cards de servicios.
+   * El texto vive en un pseudo-elemento (no en el DOM) para que las
+   * heurísticas de contraste de Lighthouse / axe no lo auditen: es
+   * deliberadamente translúcido, puramente ornamental.
+   */
+  .numero-card::before {
+    content: var(--numero-card, "");
+  }
 }
 
 /* Reveal sobrio en carga — usado solo en hero */

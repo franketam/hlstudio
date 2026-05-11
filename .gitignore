@@ -55,5 +55,8 @@ drizzle/.snapshots
 /blob-report/
 /playwright/.cache/
 
+# lighthouse audit JSON output
+/lighthouse-reports/
+
 # claude code agent state (local only, not for public repo)
 .claude/
