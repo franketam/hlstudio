@@ -1,5 +1,4 @@
 import { Resend } from "resend";
-import { env } from "@/lib/env";
 
 /**
  * Cliente Resend singleton.
@@ -7,16 +6,31 @@ import { env } from "@/lib/env";
  * Modo "off": si `RESEND_API_KEY` está vacío (típico en dev sin email),
  * `sendEmail` corta antes y devuelve {ok:false, error:"no_api_key"}.
  * El módulo de envío trata esto como un caso conocido (lo loguea, no rompe).
+ *
+ * Lee las env vars de forma lazy via `process.env` para que este módulo se
+ * pueda usar tanto desde Next (donde `lib/env` ya validó todo) como desde
+ * scripts CLI standalone (que cargan `.env.local` manualmente DESPUÉS de los
+ * imports — si acá importáramos `lib/env`, su Zod parseEnv() correría antes
+ * de que el script cargue el .env.local y abortaría con "DATABASE_URL Required").
  */
 
 let _resend: Resend | null = null;
+let _lastKey: string | null = null;
 
 function getResend(): Resend | null {
-  if (!env.RESEND_API_KEY) return null;
-  if (!_resend) {
-    _resend = new Resend(env.RESEND_API_KEY);
+  const key = process.env.RESEND_API_KEY ?? "";
+  if (!key) return null;
+  if (!_resend || _lastKey !== key) {
+    _resend = new Resend(key);
+    _lastKey = key;
   }
   return _resend;
+}
+
+function getFrom(): string {
+  const email = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
+  const name = process.env.RESEND_FROM_NAME || "HLstudio";
+  return name ? `${name} <${email}>` : email;
 }
 
 export type SendEmailInput = {
@@ -31,7 +45,7 @@ export type SendEmailInput = {
 
 export type SendEmailResult =
   | { ok: true; providerId: string | null }
-  | { ok: false; error: string };
+  | { ok: false; error: string; errorName?: string };
 
 export async function sendEmail(
   input: SendEmailInput
@@ -41,13 +55,9 @@ export async function sendEmail(
     return { ok: false, error: "no_api_key" };
   }
 
-  const from = env.RESEND_FROM_NAME
-    ? `${env.RESEND_FROM_NAME} <${env.RESEND_FROM_EMAIL}>`
-    : env.RESEND_FROM_EMAIL;
-
   try {
     const res = await client.emails.send({
-      from,
+      from: getFrom(),
       to: [input.to],
       subject: input.subject,
       html: input.html,
@@ -59,6 +69,7 @@ export async function sendEmail(
       return {
         ok: false,
         error: `${res.error.name ?? "resend_error"}: ${res.error.message ?? "sin detalle"}`,
+        errorName: res.error.name,
       };
     }
 

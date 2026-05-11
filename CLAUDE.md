@@ -98,3 +98,34 @@ Más adelante, si hace falta blindar, agregar constraint `EXCLUDE USING gist` co
 
 Por teléfono normalizado a E.164 (`+54911...`). Hay índice unique en `clientes.telefono`.
 Riesgo conocido: familias compartiendo número → un único registro de cliente. Validar con el cliente final cuando aparezca el caso (TODO §13.9 del brief).
+
+## Recordatorios T-24h / T-2h (cron en Coolify)
+
+Script CLI: `scripts/recordatorios.ts` → bundleado a `scripts/recordatorios.mjs` por el Dockerfile (junto a migrate/seed).
+
+**Cómo lo invoca el cron:**
+```sh
+node scripts/recordatorios.mjs              # corre 24h y 2h
+node scripts/recordatorios.mjs --tipo=24h   # solo 24h
+node scripts/recordatorios.mjs --tipo=2h    # solo 2h
+node scripts/recordatorios.mjs --dry-run    # detecta candidatos pero no envía
+```
+
+**Idempotencia**: cada par `(turno_id, tipo)` tiene unique constraint en `notificaciones_enviadas`. El claim atómico (`INSERT ... ON CONFLICT DO NOTHING`) garantiza que dos runs en paralelo no envían dos veces.
+
+**Ventana de barrido**: 24h busca turnos confirmados entre `now+23h` y `now+25h`; 2h entre `now+1h` y `now+3h`. Asumimos cron cada ~10 min — la ventana absorbe atrasos del scheduler.
+
+**Configurar el cron en Coolify**: dos opciones, la más simple es Scheduled Tasks (Coolify ≥ v4).
+- Dashboard → la app HLstudio → Scheduled Tasks → Add.
+- Command: `node scripts/recordatorios.mjs`
+- Frecuencia: `*/10 * * * *` (cada 10 min). Para producción real, `*/5` da más margen.
+
+Alternativa si no se usa Scheduled Tasks: container sidecar `node:22-alpine` con `crond` y un crontab montado, apuntando al mismo binario via `docker exec`.
+
+**Logs**: JSON-line a stdout (y stderr para warn/error). Coolify los captura automáticamente. Buscar mensajes:
+- `msg: "enviado"` → email mandado OK
+- `msg: "skip: cliente sin email"` → turno sin email del cliente (no se puede recordar)
+- `msg: "envio fallo permanente (no reintenta)"` → Resend rechazó el email (mal formado, etc.) — queda registrado en `notificaciones_enviadas.error`
+- `msg: "envio fallo transitorio"` → se reintenta en el próximo barrido (el lock se libera)
+
+**Exit codes**: `0` OK, `1` errores transitorios (cron retomará), `2` fatal (DB/env caído).

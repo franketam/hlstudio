@@ -31,10 +31,21 @@ ENV SESSION_PASSWORD=placeholder_placeholder_placeholder_xxx
 ENV CANCEL_TOKEN_SECRET=placeholder_placeholder_placeholder_xxx
 RUN npm run build
 
-# Bundle scripts CLI (migrate / seed) a .mjs autosuficientes que se ejecutan
-# en runtime con `node` puro — sin tsx, sin tsconfig, sin path aliases.
-# esbuild viene como dep transitiva de tsx (devDep), así que ya está en node_modules.
+# Bundle scripts CLI (migrate / seed / recordatorios) a .mjs autosuficientes
+# que se ejecutan en runtime con `node` puro — sin tsx, sin tsconfig, sin path
+# aliases. esbuild viene como dep transitiva de tsx (devDep), así que ya está
+# en node_modules.
+#
+# Dos pasadas para mantener layout PLANO en dist/scripts/*.mjs. Si se mezclan
+# entries de directorios distintos (db/ y scripts/) en una sola corrida, esbuild
+# calcula outbase a la raíz y termina escribiendo dist/scripts/db/migrate.mjs
+# y dist/scripts/scripts/recordatorios.mjs — lo cual rompe los paths que se
+# usan en CLAUDE.md / package.json (que llaman a `node scripts/<X>.mjs`).
 RUN node_modules/.bin/esbuild db/migrate.ts db/seed.ts \
+    --bundle --platform=node --format=esm --target=node22 \
+    --outdir=dist/scripts --out-extension:.js=.mjs \
+    --tsconfig=tsconfig.json && \
+    node_modules/.bin/esbuild scripts/recordatorios.ts \
     --bundle --platform=node --format=esm --target=node22 \
     --outdir=dist/scripts --out-extension:.js=.mjs \
     --tsconfig=tsconfig.json
