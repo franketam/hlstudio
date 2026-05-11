@@ -17,6 +17,7 @@
     "noImplicitOverride": true,
     "forceConsistentCasingInFileNames": true,
     "plugins": [{ "name": "next" }],
+    "baseUrl": ".",
     "paths": {
       "@/*": ["./*"]
     }
