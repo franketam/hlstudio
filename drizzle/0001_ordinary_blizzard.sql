@@ -1,0 +1,1 @@
+ALTER TABLE "barberos" ADD COLUMN "email" text;

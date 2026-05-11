@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.env
+.env.local
+.env.*.local
+.postgres-data
+*.md
+!README.md
+!CLAUDE.md
+.vscode
+.idea

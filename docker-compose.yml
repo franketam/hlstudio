@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hlstudio-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hlstudio
+      POSTGRES_PASSWORD: hlstudio
+      POSTGRES_DB: hlstudio
+    ports:
+      # Host:Container. Usamos 5433 en host por si hay otro Postgres corriendo
+      # en 5432 (servicio Windows, otro proyecto, etc.).
+      - "5433:5432"
+    volumes:
+      - ./.postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hlstudio -d hlstudio"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
