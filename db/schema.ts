@@ -191,7 +191,9 @@ export const clientes = pgTable(
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     nombre: text("nombre").notNull(),
     telefono: text("telefono").notNull(), // E.164: +54911...
-    email: text("email").notNull(),
+    // Email opcional: el flow público lo exige a nivel UI/server, pero el admin
+    // puede crear walk-ins sin email (cliente que no quiere darlo).
+    email: text("email"),
     notasAdmin: text("notas_admin"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

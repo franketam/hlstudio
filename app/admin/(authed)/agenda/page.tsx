@@ -2,6 +2,7 @@ import Link from "next/link";
 import { addDays, parseISO } from "date-fns";
 import { listTurnosDelDia } from "@/server/queries/admin";
 import { Button } from "@/components/ui/button";
+import { COPY } from "@/lib/constants";
 import {
   fechaLargaAR,
   formatDuracion,
@@ -54,11 +55,16 @@ export default async function AdminAgendaPage({
 
   return (
     <div className="container py-8">
-      <div className="mb-6">
-        <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">
-          Panel
-        </p>
-        <h1 className="display-tight mt-1 text-3xl sm:text-4xl">Agenda</h1>
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">
+            Panel
+          </p>
+          <h1 className="display-tight mt-1 text-3xl sm:text-4xl">Agenda</h1>
+        </div>
+        <Button asChild>
+          <Link href="/admin/agenda/nuevo">{COPY.admin.nuevoTurno.cta}</Link>
+        </Button>
       </div>
 
       <div className="mb-6 flex flex-wrap items-center gap-2">

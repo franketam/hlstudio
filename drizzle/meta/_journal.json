@@ -15,6 +15,13 @@
       "when": 1778208173490,
       "tag": "0001_ordinary_blizzard",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778532000972,
+      "tag": "0002_white_roughhouse",
+      "breakpoints": true
     }
   ]
 }

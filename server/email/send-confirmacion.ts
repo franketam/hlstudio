@@ -33,10 +33,13 @@ export async function sendConfirmacionEmails(turnoId: string): Promise<void> {
     }
 
     await Promise.all([
-      sendOnce(turnoId, "confirmacion_cliente", () =>
-        enviarConfirmacionCliente(ctx)
-      ),
-      // Sólo si el barbero tiene email cargado.
+      // Solo si el cliente tiene email cargado. Walk-ins admin pueden no tenerlo.
+      ctx.clienteEmail
+        ? sendOnce(turnoId, "confirmacion_cliente", () =>
+            enviarConfirmacionCliente(ctx as TurnoCtx & { clienteEmail: string })
+          )
+        : Promise.resolve(),
+      // Solo si el barbero tiene email cargado.
       ctx.barberoEmail
         ? sendOnce(turnoId, "confirmacion_barbero", () =>
             enviarNotificacionBarbero(ctx)
@@ -55,7 +58,7 @@ type TurnoCtx = {
   cancelToken: string;
   clienteNombre: string;
   clienteTelefono: string;
-  clienteEmail: string;
+  clienteEmail: string | null;
   barberoNombre: string;
   barberoEmail: string | null;
   servicioNombre: string;
@@ -87,7 +90,9 @@ async function loadTurnoContext(turnoId: string): Promise<TurnoCtx | null> {
   return row ?? null;
 }
 
-async function enviarConfirmacionCliente(ctx: TurnoCtx) {
+async function enviarConfirmacionCliente(
+  ctx: TurnoCtx & { clienteEmail: string }
+) {
   const cancelUrl = `${env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "")}/turno/${ctx.cancelToken}`;
   const rendered = renderConfirmacionCliente({
     clienteNombre: ctx.clienteNombre,
@@ -116,7 +121,7 @@ async function enviarNotificacionBarbero(ctx: TurnoCtx) {
     barberoNombre: ctx.barberoNombre,
     clienteNombre: ctx.clienteNombre,
     clienteTelefono: ctx.clienteTelefono,
-    clienteEmail: ctx.clienteEmail,
+    clienteEmail: ctx.clienteEmail ?? "",
     servicioNombre: ctx.servicioNombre,
     inicio: ctx.inicio,
     duracionMin: ctx.servicioDuracionMin,
@@ -129,7 +134,8 @@ async function enviarNotificacionBarbero(ctx: TurnoCtx) {
     subject: rendered.subject,
     html: rendered.html,
     text: rendered.text,
-    replyTo: ctx.clienteEmail, // así el barbero responde directo al cliente
+    // reply-to solo si hay email — sino el barbero respondería a vacío.
+    ...(ctx.clienteEmail ? { replyTo: ctx.clienteEmail } : {}),
   });
 }
 

@@ -202,6 +202,49 @@ export const COPY = {
       activo: "Activo",
       inactivo: "Inactivo",
     },
+    nuevoTurno: {
+      title: "Nuevo turno",
+      eyebrow: "Agenda",
+      subtitle:
+        "Cargá un turno manual: walk-in retroactivo o reserva tomada por WhatsApp / teléfono.",
+      cta: "+ Nuevo turno",
+      volverAgenda: "← Volver a la agenda",
+      barbero: "Barbero",
+      barberoPlaceholder: "Elegí un barbero",
+      servicio: "Servicio",
+      servicioPlaceholder: "Elegí un servicio",
+      servicioSinPrecio:
+        "Este barbero todavía no tiene precios cargados. Configurá precios para poder reservar.",
+      fecha: "Fecha",
+      hora: "Hora",
+      horaPlaceholder: "Elegí un horario",
+      cargandoSlots: "Cargando horarios disponibles...",
+      sinSlots: "No hay horarios disponibles para esta fecha.",
+      elegiBarberoServicio:
+        "Elegí barbero, servicio y fecha para ver los horarios.",
+      cliente: "Cliente",
+      clienteTelefono: "Teléfono",
+      clienteTelefonoPlaceholder: "11 1234 5678",
+      clienteTelefonoHint:
+        "Si el cliente ya vino antes, completamos automáticamente nombre y email.",
+      clienteEncontrado: "Cliente existente — datos cargados automáticamente.",
+      clienteNombre: "Nombre",
+      clienteNombrePlaceholder: "Nombre completo",
+      clienteEmail: "Email (opcional)",
+      clienteEmailPlaceholder: "cliente@ejemplo.com",
+      pagoEnLocal: "Ya pagó en el local",
+      pagoEnLocalHint:
+        "Marcá si el cliente ya pagó. Si no, queda como pago pendiente.",
+      crear: "Crear turno",
+      creando: "Creando turno...",
+      cancelar: "Cancelar",
+      okCreado: "Turno creado.",
+      errorGenerico: "No pudimos crear el turno. Probá de nuevo.",
+      errorSlotOcupado:
+        "Ese horario acaba de ser tomado. Refrescá los horarios disponibles.",
+      errorFechaPasada:
+        "No podés cargar turnos con más de 30 días de antigüedad.",
+    },
   },
 } as const;
 
