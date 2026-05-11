@@ -49,5 +49,11 @@ drizzle/.snapshots
 # local postgres data (docker volume mount)
 .postgres-data/
 
+# playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
 # claude code agent state (local only, not for public repo)
 .claude/

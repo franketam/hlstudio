@@ -2,7 +2,10 @@
 # Pensado para Coolify (o cualquier runtime tipo Docker / Fly / Railway).
 
 FROM node:22-alpine AS base
-RUN apk add --no-cache libc6-compat
+# tzdata es CRÍTICO: sin esto, date-fns-tz falla silenciosamente a UTC al
+# resolver "America/Argentina/Buenos_Aires" → horas mostradas en pages como
+# /turno/[token] aparecen +3h respecto a la zona local.
+RUN apk add --no-cache libc6-compat tzdata
 WORKDIR /app
 
 # --- deps layer ---
@@ -42,6 +45,8 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+# TZ del proceso Node — refuerza la TZ que usa date-fns-tz vía Intl.
+ENV TZ=America/Argentina/Buenos_Aires
 
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
