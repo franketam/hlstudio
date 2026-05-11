@@ -64,8 +64,13 @@ export default async function AdminHomePage() {
           <CardHeader>
             <CardTitle>Clientes</CardTitle>
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
-            Búsqueda + historial. Sprint 2.
+          <CardContent className="space-y-3 text-sm">
+            <p className="text-muted-foreground">
+              Búsqueda por nombre o teléfono y ficha con historial de turnos.
+            </p>
+            <Button asChild size="sm">
+              <Link href="/admin/clientes">Buscar clientes</Link>
+            </Button>
           </CardContent>
         </Card>
         <Card>

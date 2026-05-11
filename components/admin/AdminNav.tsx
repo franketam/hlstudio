@@ -17,6 +17,11 @@ const ITEMS: Array<{ href: string; label: string; match: (p: string) => boolean 
     match: (p) => p.startsWith("/admin/agenda"),
   },
   {
+    href: "/admin/clientes",
+    label: COPY.admin.nav.clientes,
+    match: (p) => p.startsWith("/admin/clientes"),
+  },
+  {
     href: "/admin/config",
     label: COPY.admin.nav.configuracion,
     match: (p) => p.startsWith("/admin/config"),

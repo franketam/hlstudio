@@ -35,6 +35,7 @@ export const COPY = {
     nav: {
       panel: "Panel",
       agenda: "Agenda",
+      clientes: "Clientes",
       configuracion: "Configuración",
     },
     config: {
@@ -201,6 +202,59 @@ export const COPY = {
     estados: {
       activo: "Activo",
       inactivo: "Inactivo",
+    },
+    clientes: {
+      title: "Clientes",
+      eyebrow: "Panel",
+      subtitle:
+        "Buscá por nombre o teléfono para ver el historial de turnos, la frecuencia y dejar notas internas.",
+      buscarPlaceholder: "Buscar por nombre o teléfono...",
+      buscarLabel: "Buscar cliente",
+      vacioBusqueda: "No encontramos clientes con esa búsqueda.",
+      vacioInicial:
+        "Todavía no hay clientes con turnos cargados. Cuando reserven o cargues un walk-in, aparecen acá.",
+      topReciente: "Clientes más recientes",
+      resultadosBusqueda: (n: number) =>
+        n === 1 ? "1 resultado" : `${n} resultados`,
+      verFicha: "Ver ficha",
+      sinEmail: "Sin email",
+      sinUltimaVisita: "Sin visitas",
+      totalTurnos: "Turnos totales",
+      ultimaVisita: "Última visita",
+      gastoTotal: "Gasto acumulado",
+      frecuencia: "Frecuencia",
+      frecuenciaUnica: "1ra visita",
+      frecuenciaDias: (n: number) => (n <= 1 ? "Viene casi a diario" : `Viene cada ~${n} días`),
+      clienteDesde: "Cliente desde",
+      datosContacto: "Datos de contacto",
+      notas: {
+        title: "Notas internas",
+        subtitle:
+          "Recordatorios para vos. El cliente no las ve. Máx. 2000 caracteres.",
+        placeholder: "Le gusta el corte bien corto. Llega siempre 10 min antes.",
+        guardar: "Guardar notas",
+        guardando: "Guardando...",
+        guardadoOk: "Notas guardadas.",
+        errorGenerico: "No pudimos guardar las notas. Probá de nuevo.",
+      },
+      historial: {
+        title: "Historial de turnos",
+        vacio: "Este cliente todavía no tiene turnos cargados.",
+        columnaFecha: "Fecha",
+        columnaBarbero: "Barbero",
+        columnaServicio: "Servicio",
+        columnaPrecio: "Precio",
+        columnaEstado: "Estado",
+      },
+      estadoBadge: {
+        confirmado: "Confirmado",
+        completado: "Completado",
+        cancelado_cliente: "Canceló el cliente",
+        cancelado_admin: "Canceló la barbería",
+        no_show: "No vino",
+      },
+      volverAListado: "← Volver al listado",
+      noEncontrado: "Cliente no encontrado.",
     },
     nuevoTurno: {
       title: "Nuevo turno",
