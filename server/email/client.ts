@@ -33,6 +33,14 @@ function getFrom(): string {
   return name ? `${name} <${email}>` : email;
 }
 
+/**
+ * Default Reply-To: si no se especifica, usa el from. Gmail penaliza emails
+ * sin reply-to válido para dominios nuevos — ayuda a deliverability.
+ */
+function getDefaultReplyTo(): string | undefined {
+  return process.env.RESEND_REPLY_TO || process.env.RESEND_FROM_EMAIL || undefined;
+}
+
 export type SendEmailInput = {
   to: string;
   subject: string;
@@ -62,7 +70,7 @@ export async function sendEmail(
       subject: input.subject,
       html: input.html,
       text: input.text,
-      replyTo: input.replyTo,
+      replyTo: input.replyTo ?? getDefaultReplyTo(),
     });
 
     if (res.error) {
