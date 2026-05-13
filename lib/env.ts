@@ -16,9 +16,13 @@ const envSchema = z.object({
   // lo que se elija como login del admin. La validación dura del formato la
   // movimos al server action si hace falta.
   ADMIN_EMAIL: z.string().min(1, "ADMIN_EMAIL no puede estar vacío"),
-  ADMIN_PASSWORD_HASH: z
+  // ADMIN_PASSWORD: plaintext en MVP (un solo admin, env vars privadas).
+  // Cuando escalemos a multi-usuario migramos a tabla `usuarios` + hashing.
+  // El hash scrypt original se sacó porque su formato `scrypt$x$y` chocaba
+  // con la interpolación de `$` de @next/env y rompía el login.
+  ADMIN_PASSWORD: z
     .string()
-    .min(1, "ADMIN_PASSWORD_HASH no puede estar vacío. Generalo con: npx tsx scripts/hash-password.ts <password>"),
+    .min(1, "ADMIN_PASSWORD no puede estar vacío"),
 
   SESSION_PASSWORD: z
     .string()

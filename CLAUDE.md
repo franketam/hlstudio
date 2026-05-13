@@ -10,10 +10,11 @@
    - Migraciones en `./drizzle/` versionadas. Generar con `npm run db:generate`, aplicar con `npm run db:migrate`.
 
 2. **Auth = plana, hardcodeada por env vars (MVP).**
-   - **No hay tabla `User`**. Hay UN admin único cuyas credenciales viven en `ADMIN_EMAIL` + `ADMIN_PASSWORD_HASH` (scrypt).
+   - **No hay tabla `User`**. Hay UN admin único: `ADMIN_EMAIL` + `ADMIN_PASSWORD` (plaintext).
+   - Comparación en server con `timingSafeEqual` (sin timing-attack).
    - Sesión via `iron-session` con cookie firmada (`SESSION_PASSWORD`).
-   - Para v2 multi-admin/multi-barbero migramos a tabla `usuarios` + `role`. No sobre-diseñar ahora.
-   - Generar hash de password: `npx tsx scripts/hash-password.ts "password"`.
+   - El hashing scrypt se sacó: el formato `scrypt$x$y` chocaba con la interpolación `$` de @next/env y rompía el login. Para 1 admin con env var privada no aporta seguridad real.
+   - Para v2 multi-admin/multi-barbero → tabla `usuarios` + `role` + hashing real (argon2id). No sobre-diseñar ahora.
 
 3. **Email = Resend.** Dominio comprado: **hlstudio.com.ar**.
    - **From oficial**: `reservas@hlstudio.com.ar` (ya decidido).
@@ -39,7 +40,7 @@ npm install
 
 # 2. Copiar env y completar
 Copy-Item .env.example .env.local
-npx tsx scripts/hash-password.ts "una-password-segura"  # pegar el output en ADMIN_PASSWORD_HASH
+ADMIN_PASSWORD=tu-password  # plaintext, MVP — comparación con timingSafeEqual server-side
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"  # SESSION_PASSWORD
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"  # CANCEL_TOKEN_SECRET
 
@@ -59,7 +60,7 @@ npm run dev
 2. **Crear app desde el repo** (Build Pack: Dockerfile). Coolify usa el `Dockerfile` raíz.
 3. **Cargar env vars en Coolify** (todas las de `.env.example` excepto las `dev_*` placeholder):
    - `DATABASE_URL` — del Postgres del paso 1
-   - `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` — generar con `scripts/hash-password.ts`
+   - `ADMIN_EMAIL`, `ADMIN_PASSWORD` — plaintext, MVP (un solo admin)
    - `SESSION_PASSWORD`, `CANCEL_TOKEN_SECRET` — `openssl rand -hex 32` o equivalente, 32+ chars cada uno
    - `RESEND_API_KEY`, `RESEND_FROM_EMAIL`
    - `NEXT_PUBLIC_APP_URL` — la URL pública de la app
