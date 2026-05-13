@@ -1,4 +1,4 @@
-import { and, eq, gte, isNull, lte } from "drizzle-orm";
+import { and, eq, gte, lte, sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import {
   barberos,
@@ -18,6 +18,7 @@ import {
   elegirCanal,
   telefonoParaWa,
   type Canal,
+  type DispatchResult,
 } from "@/server/notif/dispatch";
 
 /**
@@ -58,11 +59,17 @@ export type CandidatoRecordatorio = {
 /**
  * Busca turnos confirmados cuyo `inicio_ts` cae dentro de la ventana del
  * recordatorio (24h: now+23h..now+25h; 2h: now+1h..now+3h) y que todavía
- * no tienen NINGÚN registro en `notificaciones_enviadas` para ese tipo
- * (cualquier canal).
+ * NO tienen los 2 canales aplicables enviados para ese tipo.
  *
- * El LEFT JOIN filtra por tipo (sin canal) → si match, ya fue procesado
- * (por whatsapp o email) y no es candidato.
+ * Estrategia "both" para cliente: el turno puede tener hasta 2 filas en
+ * `notificaciones_enviadas` (una por canal). Es candidato mientras tenga
+ * MENOS DE 2 filas — eso permite reintentar el canal que falló transitorio
+ * en el próximo barrido (el otro canal ya está locked y devuelve claim_lost
+ * sin trabajo extra).
+ *
+ * Cliente sin teléfono: nunca llega a 2 filas (solo email). En estado
+ * estable tendrá 1 fila → sigue siendo "candidato" pero el dispatcher hace
+ * claim_lost en email y skip en WA (sin teléfono). Cero envíos extra.
  *
  * Filtra también `inicio_ts >= now` para no procesar turnos ya pasados
  * (defensa contra cron que se atrasa mucho).
@@ -74,6 +81,13 @@ export async function findCandidatos(
 ): Promise<CandidatoRecordatorio[]> {
   const tipoStr = TIPO_NOTIF[tipo];
   const { desde, hasta } = ventana(tipo, now);
+
+  // Subquery correlada: cuenta filas en notificaciones_enviadas para (turno, tipo).
+  const notifsCount = sql<number>`(
+    SELECT COUNT(*)::int FROM ${notificacionesEnviadas}
+    WHERE ${notificacionesEnviadas.turnoId} = ${turnos.id}
+      AND ${notificacionesEnviadas.tipo} = ${tipoStr}
+  )`;
 
   const rows = await db
     .select({
@@ -87,26 +101,18 @@ export async function findCandidatos(
       barberoNombre: barberos.nombre,
       servicioNombre: servicios.nombre,
       servicioDuracionMin: servicios.duracionMin,
-      notifId: notificacionesEnviadas.id,
     })
     .from(turnos)
     .innerJoin(clientes, eq(clientes.id, turnos.clienteId))
     .innerJoin(barberos, eq(barberos.id, turnos.barberoId))
     .innerJoin(servicios, eq(servicios.id, turnos.servicioId))
-    .leftJoin(
-      notificacionesEnviadas,
-      and(
-        eq(notificacionesEnviadas.turnoId, turnos.id),
-        eq(notificacionesEnviadas.tipo, tipoStr)
-      )
-    )
     .where(
       and(
         eq(turnos.estado, "confirmado"),
         gte(turnos.inicioTs, desde),
         lte(turnos.inicioTs, hasta),
         gte(turnos.inicioTs, now),
-        isNull(notificacionesEnviadas.id)
+        sql`${notifsCount} < 2`
       )
     );
 
@@ -152,6 +158,8 @@ export type ProcesarResultado =
       tipo: RecordatorioTipo;
       canal: Canal;
       providerId: string | null;
+      /** Resultado per-canal (1 o 2 items según estrategia "both"). */
+      perCanal?: DispatchResult[];
     }
   | {
       ok: false;
@@ -166,6 +174,7 @@ export type ProcesarResultado =
         | "send_failed_transitorio"
         | "internal_error";
       detail?: string;
+      perCanal?: DispatchResult[];
     };
 
 /**
@@ -232,46 +241,72 @@ export async function procesarCandidato(
     cancelUrl,
   });
 
-  const r = await dispatchNotificacion(db, {
-    turnoId: cand.turnoId,
-    tipo: tipoStr as "recordatorio_24h" | "recordatorio_2h",
-    destinatarioTelefono: telefonoWa,
-    destinatarioEmail: cand.clienteEmail,
-    waText,
-    emailPayload: {
-      to: cand.clienteEmail ?? "",
-      subject: emailRendered?.subject ?? "",
-      html: emailRendered?.html ?? "",
-      text: emailRendered?.text,
+  // Cliente: estrategia "both" — manda WA + email en paralelo. Cada canal
+  // tiene su propia idempotencia atómica (turno_id, tipo, canal).
+  const results = await dispatchNotificacion(
+    db,
+    {
+      turnoId: cand.turnoId,
+      tipo: tipoStr as "recordatorio_24h" | "recordatorio_2h",
+      destinatarioTelefono: telefonoWa,
+      destinatarioEmail: cand.clienteEmail,
+      waText,
+      emailPayload: {
+        to: cand.clienteEmail ?? "",
+        subject: emailRendered?.subject ?? "",
+        html: emailRendered?.html ?? "",
+        text: emailRendered?.text,
+      },
     },
-  });
+    "both"
+  );
 
-  if (r.ok) {
+  // El resultado "agregado" del turno es OK si al menos UN canal salió bien.
+  // Los detalles per-canal van como array secundario para el cron loggee cada uno.
+  const algunOk = results.find((r) => r.ok);
+  if (algunOk && algunOk.ok) {
     return {
       ok: true,
       turnoId: cand.turnoId,
       tipo,
-      canal: r.canal,
-      providerId: r.providerId,
+      canal: algunOk.canal,
+      providerId: algunOk.providerId,
+      perCanal: results,
     };
   }
 
-  // Mapeo de errores
-  if (r.code === "skipped_sin_destinatario") {
+  // Todos fallaron — devolver el primer error informativo (no claim_lost).
+  const primerError =
+    results.find((r) => !r.ok && r.code !== "claim_lost") ?? results[0];
+
+  if (!primerError || primerError.ok) {
     return {
       ok: false,
       turnoId: cand.turnoId,
       tipo,
-      canal: r.canal,
+      canal: "ninguno",
       code: "skipped_sin_destinatario",
+      perCanal: results,
+    };
+  }
+
+  if (primerError.code === "skipped_sin_destinatario") {
+    return {
+      ok: false,
+      turnoId: cand.turnoId,
+      tipo,
+      canal: primerError.canal,
+      code: "skipped_sin_destinatario",
+      perCanal: results,
     };
   }
   return {
     ok: false,
     turnoId: cand.turnoId,
     tipo,
-    canal: r.canal,
-    code: r.code,
-    detail: r.detail,
+    canal: primerError.canal,
+    code: primerError.code,
+    detail: primerError.detail,
+    perCanal: results,
   };
 }

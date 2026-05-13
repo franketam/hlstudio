@@ -1,18 +1,18 @@
 /**
- * Dispatcher de notificaciones: decide canal (whatsapp vs email) y persiste
- * idempotencia en `notificaciones_enviadas` por (turno_id, tipo, canal).
+ * Dispatcher de notificaciones: persiste idempotencia en `notificaciones_enviadas`
+ * por (turno_id, tipo, canal) y permite dos estrategias:
  *
- * Regla actual (post-decision Sprint 1.5):
- *  - Si hay teléfono destinatario normalizable Y `WHATSAPP_BOT_URL` configurada →
- *    se manda WhatsApp. Si el envío WA falla (cualquier causa), NO se cae a email
- *    automáticamente. Queda registrado el error en la tabla y un log.
- *  - Si NO hay teléfono / WHATSAPP_BOT_URL vacía → email.
+ *  - "both" (cliente final): manda WA y email EN PARALELO cuando ambos canales
+ *    están disponibles. Cada canal tiene su propia idempotencia atómica.
+ *    Decisión del cliente: el email de hlstudio.com.ar todavía cae a spam en
+ *    Gmail (dominio nuevo), así que mandamos los dos para garantizar entrega.
  *
- * El "no fallback" es la decisión explícita del cliente para el barbero, y
- * la mantenemos consistente para el cliente final también — sino terminamos
- * con doble envío en caso de timeouts intermitentes.
+ *  - "preferred" (barbero): manda WhatsApp si tiene teléfono + bot configurado,
+ *    sino email. Sin fallback automático si el canal preferido falla. Lo que
+ *    le sirve al barbero es la primera notificación útil, no dos.
  *
- * Backward compat: barberos sin `telefono` cargado siguen recibiendo email.
+ * Cada canal individual es resiliente: si falla, queda registrado el error y
+ * NO propaga la excepción al caller. El booking nunca rompe por un fallo de notif.
  *
  * Server-only. No importar desde Client Components.
  */
@@ -70,40 +70,70 @@ export type DispatchResult =
       detail?: string;
     };
 
+export type DispatchStrategy = "both" | "preferred";
+
 /**
- * Resuelve canal preferido y lo persiste de forma idempotente.
+ * Dispatch principal. Devuelve un array de resultados (uno por canal intentado).
  *
- * Idempotencia:
- *  - Antes de enviar, INSERT ... ON CONFLICT DO NOTHING en `notificaciones_enviadas`
- *    con (turno_id, tipo, canal). Si insert devuelve 0 filas, otro proceso ya lo
- *    agarró (claim_lost).
+ *  - strategy="both": intenta WA y email en paralelo. Cada uno con su propia
+ *    idempotencia atómica. Array puede tener 0, 1 o 2 elementos según qué canales
+ *    estén disponibles para este destinatario.
+ *
+ *  - strategy="preferred": elige UN canal según `elegirCanal` y solo manda por ese.
+ *    Array siempre tiene 1 elemento (puede ser ok o fail).
+ *
+ * NUNCA propaga excepciones — los errores van en el array de resultados.
+ */
+export async function dispatchNotificacion(
+  db: Db,
+  input: DispatchInput,
+  strategy: DispatchStrategy = "preferred"
+): Promise<DispatchResult[]> {
+  if (strategy === "both") {
+    const tasks: Promise<DispatchResult>[] = [];
+    if (input.destinatarioTelefono) {
+      tasks.push(dispatchUnoCanal(db, input, "whatsapp"));
+    }
+    if (input.destinatarioEmail) {
+      tasks.push(dispatchUnoCanal(db, input, "email"));
+    }
+    if (tasks.length === 0) {
+      return [
+        {
+          ok: false,
+          canal: "ninguno",
+          code: "skipped_sin_destinatario",
+        },
+      ];
+    }
+    return Promise.all(tasks);
+  }
+
+  // "preferred": elegir un solo canal
+  const canal: Canal = elegirCanal(input.destinatarioTelefono);
+  if (canal === "whatsapp" && !input.destinatarioTelefono) {
+    return [{ ok: false, canal: "ninguno", code: "skipped_sin_destinatario" }];
+  }
+  if (canal === "email" && !input.destinatarioEmail) {
+    return [{ ok: false, canal: "ninguno", code: "skipped_sin_destinatario" }];
+  }
+  return [await dispatchUnoCanal(db, input, canal)];
+}
+
+/**
+ * Dispatch para UN canal específico con idempotencia atómica.
+ *
+ *  - INSERT ... ON CONFLICT DO NOTHING sobre (turno_id, tipo, canal). Si devuelve
+ *    0 filas, otro proceso ya lo procesó (claim_lost).
  *  - Si el envío falla:
  *      * permanente: dejar el row con `error`, no reintentar
  *      * transitorio: DELETE del row para permitir retry futuro
  */
-export async function dispatchNotificacion(
+async function dispatchUnoCanal(
   db: Db,
-  input: DispatchInput
+  input: DispatchInput,
+  canal: Canal
 ): Promise<DispatchResult> {
-  const canal: Canal = elegirCanal(input.destinatarioTelefono);
-
-  // Si elegimos WA pero el cliente no tiene WA URL Y tampoco email → no hay forma.
-  // Si elegimos email pero no tiene email → tampoco.
-  if (canal === "whatsapp" && !input.destinatarioTelefono) {
-    return {
-      ok: false,
-      canal: "ninguno",
-      code: "skipped_sin_destinatario",
-    };
-  }
-  if (canal === "email" && !input.destinatarioEmail) {
-    return {
-      ok: false,
-      canal: "ninguno",
-      code: "skipped_sin_destinatario",
-    };
-  }
-
   // Claim atómico
   let claimed: { id: string } | undefined;
   try {
@@ -158,7 +188,6 @@ export async function dispatchNotificacion(
       } else {
         sendErr = {
           // Heurística mínima: errores con errorName conocido = permanente.
-          // Mantenemos misma lógica que recordatorios para no divergir.
           permanente: r.errorName === "validation_error" ||
             r.errorName === "invalid_email" ||
             r.errorName === "invalid_to_address" ||

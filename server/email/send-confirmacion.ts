@@ -64,21 +64,29 @@ export async function sendConfirmacionEmails(turnoId: string): Promise<void> {
         cancelUrl,
       });
 
-      const r = await dispatchNotificacion(db, {
-        turnoId,
-        tipo: "confirmacion_cliente",
-        destinatarioTelefono: telefonoParaWa(ctx.clienteTelefono),
-        destinatarioEmail: ctx.clienteEmail,
-        waText,
-        emailPayload: {
-          to: ctx.clienteEmail ?? "",
-          subject: emailRendered?.subject ?? "",
-          html: emailRendered?.html ?? "",
-          text: emailRendered?.text,
+      // Cliente: estrategia "both" — manda WA + email en paralelo si ambos
+      // disponibles. Cada canal es independiente; si uno falla el otro sigue.
+      const results = await dispatchNotificacion(
+        db,
+        {
+          turnoId,
+          tipo: "confirmacion_cliente",
+          destinatarioTelefono: telefonoParaWa(ctx.clienteTelefono),
+          destinatarioEmail: ctx.clienteEmail,
+          waText,
+          emailPayload: {
+            to: ctx.clienteEmail ?? "",
+            subject: emailRendered?.subject ?? "",
+            html: emailRendered?.html ?? "",
+            text: emailRendered?.text,
+          },
         },
-      });
+        "both"
+      );
 
-      logDispatchResult("confirmacion_cliente", turnoId, r);
+      for (const r of results) {
+        logDispatchResult("confirmacion_cliente", turnoId, r);
+      }
     }
 
     // -- Barbero --
@@ -109,22 +117,30 @@ export async function sendConfirmacionEmails(turnoId: string): Promise<void> {
         precioTotal: ctx.precioTotal,
       });
 
-      const r = await dispatchNotificacion(db, {
-        turnoId,
-        tipo: "confirmacion_barbero",
-        destinatarioTelefono: telefonoParaWa(ctx.barberoTelefono),
-        destinatarioEmail: ctx.barberoEmail,
-        waText,
-        emailPayload: {
-          to: ctx.barberoEmail ?? "",
-          subject: emailRendered?.subject ?? "",
-          html: emailRendered?.html ?? "",
-          text: emailRendered?.text,
-          ...(ctx.clienteEmail ? { replyTo: ctx.clienteEmail } : {}),
+      // Barbero: estrategia "preferred" — WA si tiene teléfono cargado,
+      // sino email (backward compat). Sin doble envío.
+      const results = await dispatchNotificacion(
+        db,
+        {
+          turnoId,
+          tipo: "confirmacion_barbero",
+          destinatarioTelefono: telefonoParaWa(ctx.barberoTelefono),
+          destinatarioEmail: ctx.barberoEmail,
+          waText,
+          emailPayload: {
+            to: ctx.barberoEmail ?? "",
+            subject: emailRendered?.subject ?? "",
+            html: emailRendered?.html ?? "",
+            text: emailRendered?.text,
+            ...(ctx.clienteEmail ? { replyTo: ctx.clienteEmail } : {}),
+          },
         },
-      });
+        "preferred"
+      );
 
-      logDispatchResult("confirmacion_barbero", turnoId, r);
+      for (const r of results) {
+        logDispatchResult("confirmacion_barbero", turnoId, r);
+      }
     }
   } catch (err) {
     console.error("[notif.sendConfirmacionEmails] error fatal", err);
@@ -175,7 +191,7 @@ async function loadTurnoContext(turnoId: string): Promise<TurnoCtx | null> {
 function logDispatchResult(
   tipo: string,
   turnoId: string,
-  r: Awaited<ReturnType<typeof dispatchNotificacion>>
+  r: Awaited<ReturnType<typeof dispatchNotificacion>>[number]
 ): void {
   if (r.ok) {
     console.log(
