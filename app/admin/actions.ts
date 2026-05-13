@@ -87,7 +87,12 @@ export async function loginAction(
   session.loggedInAt = Date.now();
   await session.save();
 
-  redirect("/admin");
+  // Devolvemos { ok: true } en vez de hacer redirect() acá. La combinación
+  // cookies().set() + redirect() en el mismo request de Server Action puede
+  // perder la cookie cuando hay reverse proxy entremedio (Coolify, Vercel
+  // edge, etc.) — el redirect 303 se procesa antes de que el Set-Cookie
+  // se commitee. El cliente hace router.push() cuando state.ok === true.
+  return { ok: true };
 }
 
 export async function logoutAction(): Promise<void> {

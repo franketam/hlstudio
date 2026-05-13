@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,7 +11,19 @@ import { COPY } from "@/lib/constants";
 const initial: ActionResult | null = null;
 
 export function LoginForm() {
+  const router = useRouter();
   const [state, formAction, pending] = useActionState(loginAction, initial);
+
+  // Cuando el server action devuelve ok: true, navegamos client-side.
+  // Esto garantiza que el Set-Cookie del response se commitee ANTES de la
+  // próxima request a /admin — evita el race condition de Coolify/proxy
+  // donde cookies().set() + redirect() pueden perder la cookie.
+  useEffect(() => {
+    if (state?.ok === true) {
+      router.replace("/admin");
+      router.refresh();
+    }
+  }, [state, router]);
 
   return (
     <form
