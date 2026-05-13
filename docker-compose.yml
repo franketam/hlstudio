@@ -18,3 +18,29 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  whatsapp-bot:
+    build:
+      context: ./services/whatsapp-bot
+      dockerfile: Dockerfile
+    container_name: hlstudio-whatsapp-bot
+    restart: unless-stopped
+    # Levantar con `docker compose --profile wa up -d` para no forzarlo a quien
+    # solo quiere postgres local. En prod (Coolify), el servicio se despliega
+    # como su propio app desde services/whatsapp-bot/.
+    profiles:
+      - wa
+    environment:
+      PORT: 3001
+      AUTH_DIR: /data/auth
+      WHATSAPP_BOT_TOKEN: ${WHATSAPP_BOT_TOKEN:-}
+      LOG_LEVEL: info
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./.wa-auth:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

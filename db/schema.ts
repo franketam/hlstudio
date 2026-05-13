@@ -58,6 +58,11 @@ export const barberos = pgTable(
     // Email del barbero — recibe notificación cuando le crean un turno.
     // Nullable: si está vacío, se omite el envío al barbero (cliente sí recibe).
     email: text("email"),
+    // Teléfono del barbero en E.164 (+549...). Si está cargado, las notificaciones
+    // se envían por WhatsApp en vez de email (decisión del cliente: WA reemplaza email).
+    // Si null, se mantiene el fallback email — preserva backward compat para barberos
+    // viejos no migrados al schema nuevo.
+    telefono: text("telefono"),
     activo: boolean("activo").notNull().default(true),
     orden: smallint("orden").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -274,15 +279,25 @@ export const notificacionesEnviadas = pgTable(
     turnoId: uuid("turno_id")
       .notNull()
       .references(() => turnos.id, { onDelete: "cascade" }),
-    tipo: text("tipo").notNull(), // 'confirmacion' | 'recordatorio_24h' | 'recordatorio_2h' | 'cancelacion'
+    tipo: text("tipo").notNull(), // 'confirmacion_cliente' | 'confirmacion_barbero' | 'recordatorio_24h' | 'recordatorio_2h' | 'cancelacion'
+    // Canal por el que se mandó. 'email' = Resend, 'whatsapp' = bot Baileys interno.
+    // Default 'email' para backward-compat con filas previas y casos donde no
+    // se especifique explícitamente.
+    canal: text("canal").notNull().default("email"),
     enviadoAt: timestamp("enviado_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
-    proveedorId: text("proveedor_id"), // id que devuelve Resend
+    proveedorId: text("proveedor_id"), // id que devuelve Resend / mensaje id de WA
     error: text("error"),
   },
   (t) => ({
-    turnoTipoUnique: uniqueIndex("notif_turno_tipo_unique").on(t.turnoId, t.tipo),
+    // Unique compuesto incluye canal: el mismo turno puede tener registros de
+    // recordatorio_24h por email y por whatsapp (lados separados), uno por canal.
+    turnoTipoCanalUnique: uniqueIndex("notif_turno_tipo_canal_unique").on(
+      t.turnoId,
+      t.tipo,
+      t.canal
+    ),
   })
 );
 

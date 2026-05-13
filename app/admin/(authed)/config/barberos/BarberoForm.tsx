@@ -36,6 +36,11 @@ const clientSchema = z.object({
       "Ingresá un email válido."
     )
     .optional(),
+  telefono: z
+    .string()
+    .trim()
+    .max(40, "Teléfono demasiado largo.")
+    .optional(),
   orden: z.coerce
     .number({ invalid_type_error: "Ingresá un número." })
     .int()
@@ -67,6 +72,7 @@ export function BarberoForm({ mode, barberoId, defaultValues }: Props) {
       fotoUrl: defaultValues?.fotoUrl ?? "",
       descripcion: defaultValues?.descripcion ?? "",
       email: defaultValues?.email ?? "",
+      telefono: defaultValues?.telefono ?? "",
       orden: defaultValues?.orden ?? 0,
     },
   });
@@ -79,6 +85,7 @@ export function BarberoForm({ mode, barberoId, defaultValues }: Props) {
         fotoUrl: data.fotoUrl ?? "",
         descripcion: data.descripcion ?? "",
         email: data.email ?? "",
+        telefono: data.telefono ?? "",
         orden: data.orden,
       };
 
@@ -190,6 +197,34 @@ export function BarberoForm({ mode, barberoId, defaultValues }: Props) {
         {errors.email ? (
           <p id="email-error" role="alert" className="text-sm text-destructive">
             {errors.email.message}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="telefono">{COPY.admin.barberos.form.telefono}</Label>
+        <Input
+          id="telefono"
+          type="tel"
+          inputMode="tel"
+          autoComplete="off"
+          placeholder={COPY.admin.barberos.form.telefonoPlaceholder}
+          aria-invalid={errors.telefono ? "true" : "false"}
+          aria-describedby={
+            errors.telefono ? "telefono-error" : "telefono-hint"
+          }
+          {...register("telefono")}
+        />
+        <p id="telefono-hint" className="text-xs text-muted-foreground">
+          {COPY.admin.barberos.form.telefonoHint}
+        </p>
+        {errors.telefono ? (
+          <p
+            id="telefono-error"
+            role="alert"
+            className="text-sm text-destructive"
+          >
+            {errors.telefono.message}
           </p>
         ) : null}
       </div>

@@ -7,6 +7,7 @@ import { redirect } from "next/navigation";
 import { db } from "@/db/client";
 import { barberos } from "@/db/schema";
 import { getSession } from "@/lib/session";
+import { normalizarTelefonoAR } from "@/lib/phone";
 
 /**
  * CRUD de barberos para el panel admin.
@@ -43,6 +44,13 @@ const barberoSchema = z.object({
     .optional()
     .or(z.literal(""))
     .transform((v) => (v && v.length > 0 ? v : null)),
+  telefono: z
+    .string()
+    .trim()
+    .max(40, "Teléfono demasiado largo.")
+    .optional()
+    .or(z.literal(""))
+    .transform((v) => (v && v.length > 0 ? v : null)),
   orden: z.coerce
     .number()
     .int("El orden debe ser entero.")
@@ -65,6 +73,16 @@ async function requireSession(): Promise<ErrResult | null> {
     };
   }
   return null;
+}
+
+/**
+ * Best-effort: si el normalizador encuentra un E.164 válido lo usa; sino guarda
+ * el string original (tal cual lo ingresó el admin). El dispatcher después
+ * vuelve a intentar normalizar al momento de enviar.
+ */
+function normalizarTelOrFallback(input: string | null): string | null {
+  if (!input) return null;
+  return normalizarTelefonoAR(input) ?? input;
 }
 
 function revalidateAll(): void {
@@ -93,6 +111,8 @@ export async function createBarberoAction(
     };
   }
 
+  const telefonoNorm = normalizarTelOrFallback(parsed.data.telefono);
+
   try {
     const [row] = await db
       .insert(barberos)
@@ -101,6 +121,7 @@ export async function createBarberoAction(
         fotoUrl: parsed.data.fotoUrl,
         descripcion: parsed.data.descripcion,
         email: parsed.data.email,
+        telefono: telefonoNorm,
         orden: parsed.data.orden,
       })
       .returning({ id: barberos.id });
@@ -155,6 +176,8 @@ export async function updateBarberoAction(
     };
   }
 
+  const telefonoNorm = normalizarTelOrFallback(parsed.data.telefono);
+
   try {
     const [row] = await db
       .update(barberos)
@@ -163,6 +186,7 @@ export async function updateBarberoAction(
         fotoUrl: parsed.data.fotoUrl,
         descripcion: parsed.data.descripcion,
         email: parsed.data.email,
+        telefono: telefonoNorm,
         orden: parsed.data.orden,
         updatedAt: new Date(),
       })

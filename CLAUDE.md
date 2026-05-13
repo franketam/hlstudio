@@ -126,6 +126,44 @@ Más adelante, si hace falta blindar, agregar constraint `EXCLUDE USING gist` co
 Por teléfono normalizado a E.164 (`+54911...`). Hay índice unique en `clientes.telefono`.
 Riesgo conocido: familias compartiendo número → un único registro de cliente. Validar con el cliente final cuando aparezca el caso (TODO §13.9 del brief).
 
+## WhatsApp (Sprint 1.5)
+
+Servicio aparte en `services/whatsapp-bot/` — Express + Baileys. La app principal se comunica vía HTTP usando `WHATSAPP_BOT_URL` + `WHATSAPP_BOT_TOKEN`.
+
+**Reglas de canal** (ver `server/notif/dispatch.ts`):
+- Si el destinatario tiene teléfono normalizable Y `WHATSAPP_BOT_URL` está seteada → WhatsApp.
+- Si no → email.
+- Si WA falla (cualquier motivo), NO se cae a email automáticamente. Queda registrado en `notificaciones_enviadas.error` con el detalle.
+
+**Backward-compat**: barberos sin `telefono` cargado siguen recibiendo email — no se rompe el flujo viejo.
+
+**Idempotencia**: unique compuesto en `(turno_id, tipo, canal)` — un mismo turno puede llevar registro de `recordatorio_24h` por whatsapp y por email (distintos canales, distintas filas), pero nunca dos por el mismo canal.
+
+**Pareo inicial**:
+1. Levantar bot (Coolify: app separada apuntando a `services/whatsapp-bot/Dockerfile`; local: `docker compose --profile wa up -d whatsapp-bot`).
+2. Loguearse al panel admin → `/admin/whatsapp` → escanear QR con celular.
+3. Estado pasa a `ready`. Listo.
+
+**Auto-clean en logout**: si WhatsApp expulsa la sesión remotamente (DisconnectReason.loggedOut), el bot borra el `AUTH_DIR` y muestra QR nuevo. El admin re-parea desde `/admin/whatsapp`.
+
+**TODO confirmar dirección exacta** del local con el cliente y reemplazar el placeholder `"HLstudio — Chivilcoy"` en:
+- `server/whatsapp/templates.ts` (constante `HL_DIRECCION_PLACEHOLDER`)
+- Idealmente también en los emails (`server/email/templates/*`).
+
+**Deploy Coolify**:
+1. Crear servicio Postgres (ya existe).
+2. Crear app principal HLstudio desde Dockerfile raíz (ya existe).
+3. **Crear app NUEVA** desde `services/whatsapp-bot/Dockerfile`:
+   - Port: 3001.
+   - Healthcheck: `/health`.
+   - Volume persistente montado en `/data` (para el AUTH_DIR — sin eso, cada redeploy pide re-pareo).
+   - Env vars: `WHATSAPP_BOT_TOKEN` (igual que en la app principal), opcional `LOG_LEVEL=info`.
+4. En la app principal HLstudio, agregar env vars: `WHATSAPP_BOT_URL=http://hlstudio-whatsapp-bot:3001` (DNS interno de Coolify) y `WHATSAPP_BOT_TOKEN=<mismo bearer>`.
+5. Redeploy app principal.
+6. Loguearse → `/admin/whatsapp` → escanear QR.
+
+**Smoke pendiente al pairing inicial en prod**: el envío real WA solo se puede validar contra una cuenta WhatsApp real pareada. En dev se chequea typecheck + build + arranque del bot (sin pareo no envía).
+
 ## Recordatorios T-24h / T-2h (cron en Coolify)
 
 Script CLI: `scripts/recordatorios.ts` → bundleado a `scripts/recordatorios.mjs` por el Dockerfile (junto a migrate/seed).

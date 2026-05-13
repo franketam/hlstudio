@@ -144,6 +144,7 @@ async function correrTipo(
       log("info", args.dryRun ? "dry-run: enviaria" : "enviado", {
         turnoId: res.turnoId,
         tipo,
+        canal: res.canal,
         providerId: res.providerId,
         cliente: cand.clienteEmail,
         inicio: cand.inicio.toISOString(),
@@ -151,10 +152,12 @@ async function correrTipo(
     } else {
       switch (res.code) {
         case "skipped_no_email":
+        case "skipped_sin_destinatario":
           counts.skippedNoEmail++;
-          log("warn", "skip: cliente sin email", {
+          log("warn", "skip: cliente sin destinatario", {
             turnoId: res.turnoId,
             tipo,
+            canal: res.canal,
             inicio: cand.inicio.toISOString(),
           });
           break;
@@ -163,6 +166,7 @@ async function correrTipo(
           log("info", "skip: claim perdido (lo agarro otro proceso)", {
             turnoId: res.turnoId,
             tipo,
+            canal: res.canal,
           });
           break;
         case "send_failed_permanente":
@@ -170,6 +174,7 @@ async function correrTipo(
           log("warn", "envio fallo permanente (no reintenta)", {
             turnoId: res.turnoId,
             tipo,
+            canal: res.canal,
             detail: res.detail,
           });
           break;
@@ -178,6 +183,7 @@ async function correrTipo(
           log("error", "envio fallo transitorio (se reintenta proximo barrido)", {
             turnoId: res.turnoId,
             tipo,
+            canal: res.canal,
             detail: res.detail,
           });
           break;
@@ -186,6 +192,7 @@ async function correrTipo(
           log("error", "error interno", {
             turnoId: res.turnoId,
             tipo,
+            canal: res.canal,
             detail: res.detail,
           });
           break;

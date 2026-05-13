@@ -43,6 +43,7 @@ export default async function EditarBarberoPage({
             fotoUrl: barbero.fotoUrl ?? "",
             descripcion: barbero.descripcion ?? "",
             email: barbero.email ?? "",
+            telefono: barbero.telefono ?? "",
             orden: barbero.orden,
           }}
         />

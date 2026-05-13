@@ -26,6 +26,11 @@ const ITEMS: Array<{ href: string; label: string; match: (p: string) => boolean 
     label: COPY.admin.nav.configuracion,
     match: (p) => p.startsWith("/admin/config"),
   },
+  {
+    href: "/admin/whatsapp",
+    label: COPY.admin.nav.whatsapp,
+    match: (p) => p.startsWith("/admin/whatsapp"),
+  },
 ];
 
 export function AdminNav() {

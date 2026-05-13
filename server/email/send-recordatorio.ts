@@ -8,11 +8,17 @@ import {
   turnos,
 } from "@/db/schema";
 import * as schema from "@/db/schema";
-import { sendEmail } from "./client";
 import {
   renderRecordatorioCliente,
   type RecordatorioTipo,
 } from "./templates/recordatorio-cliente";
+import { renderRecordatorioClienteWa } from "@/server/whatsapp/templates";
+import {
+  dispatchNotificacion,
+  elegirCanal,
+  telefonoParaWa,
+  type Canal,
+} from "@/server/notif/dispatch";
 
 /**
  * Este módulo NO importa `@/db/client` para poder ser usado desde:
@@ -25,28 +31,16 @@ export type Db = PostgresJsDatabase<typeof schema>;
 
 /**
  * Tipo de notificación que se persiste en `notificaciones_enviadas.tipo`.
- * Convención existente: `confirmacion_cliente`, `confirmacion_barbero`.
+ * Convención: `recordatorio_24h`, `recordatorio_2h`.
+ *
+ * IMPORTANTE: el unique compuesto es (turno_id, tipo, canal). Para detectar
+ * si un turno YA recibió el recordatorio (sin importar el canal), filtramos
+ * sin canal: si hay cualquier fila para ese tipo, no es candidato.
  */
 const TIPO_NOTIF: Record<RecordatorioTipo, string> = {
   "24h": "recordatorio_24h",
   "2h": "recordatorio_2h",
 };
-
-/**
- * Resend devuelve un `error.name` cuando rebota. Estos nombres significan
- * "fallo permanente" (email mal formado, dominio rechazado, etc.) — no tiene
- * sentido reintentar. Cualquier otro nombre (rate limit, server error) lo
- * consideramos transitorio y permitimos retry.
- *
- * Lista basada en docs públicas de Resend; agregar acá si aparece alguno nuevo.
- */
-const ERROR_NAMES_PERMANENTES = new Set<string>([
-  "validation_error",
-  "invalid_email",
-  "invalid_to_address",
-  "invalid_from_address",
-  "missing_required_field",
-]);
 
 export type CandidatoRecordatorio = {
   turnoId: string;
@@ -55,6 +49,7 @@ export type CandidatoRecordatorio = {
   cancelToken: string;
   clienteNombre: string;
   clienteEmail: string | null;
+  clienteTelefono: string;
   barberoNombre: string;
   servicioNombre: string;
   servicioDuracionMin: number;
@@ -63,12 +58,11 @@ export type CandidatoRecordatorio = {
 /**
  * Busca turnos confirmados cuyo `inicio_ts` cae dentro de la ventana del
  * recordatorio (24h: now+23h..now+25h; 2h: now+1h..now+3h) y que todavía
- * no tienen registro en `notificaciones_enviadas` para ese tipo.
+ * no tienen NINGÚN registro en `notificaciones_enviadas` para ese tipo
+ * (cualquier canal).
  *
- * Importante: la query NO filtra por email NULL — lo manejamos arriba para
- * loggear "skipped_no_email" y dejar registrado el caso (sin marcar enviado,
- * porque tampoco tiene sentido retry — pero queda en logs para que el admin
- * vea que esos turnos no recibieron aviso).
+ * El LEFT JOIN filtra por tipo (sin canal) → si match, ya fue procesado
+ * (por whatsapp o email) y no es candidato.
  *
  * Filtra también `inicio_ts >= now` para no procesar turnos ya pasados
  * (defensa contra cron que se atrasa mucho).
@@ -81,8 +75,6 @@ export async function findCandidatos(
   const tipoStr = TIPO_NOTIF[tipo];
   const { desde, hasta } = ventana(tipo, now);
 
-  // LEFT JOIN con notificaciones_enviadas filtrando por tipo:
-  // si no hay match, queda NULL → es candidato.
   const rows = await db
     .select({
       turnoId: turnos.id,
@@ -91,6 +83,7 @@ export async function findCandidatos(
       cancelToken: turnos.cancelToken,
       clienteNombre: clientes.nombre,
       clienteEmail: clientes.email,
+      clienteTelefono: clientes.telefono,
       barberoNombre: barberos.nombre,
       servicioNombre: servicios.nombre,
       servicioDuracionMin: servicios.duracionMin,
@@ -124,6 +117,7 @@ export async function findCandidatos(
     cancelToken: r.cancelToken,
     clienteNombre: r.clienteNombre,
     clienteEmail: r.clienteEmail,
+    clienteTelefono: r.clienteTelefono,
     barberoNombre: r.barberoNombre,
     servicioNombre: r.servicioNombre,
     servicioDuracionMin: r.servicioDuracionMin,
@@ -145,7 +139,6 @@ export function ventana(
       hasta: new Date(now.getTime() + 25 * 3_600_000),
     };
   }
-  // 2h
   return {
     desde: new Date(now.getTime() + 1 * 3_600_000),
     hasta: new Date(now.getTime() + 3 * 3_600_000),
@@ -153,13 +146,21 @@ export function ventana(
 }
 
 export type ProcesarResultado =
-  | { ok: true; turnoId: string; tipo: RecordatorioTipo; providerId: string | null }
+  | {
+      ok: true;
+      turnoId: string;
+      tipo: RecordatorioTipo;
+      canal: Canal;
+      providerId: string | null;
+    }
   | {
       ok: false;
       turnoId: string;
       tipo: RecordatorioTipo;
+      canal: Canal | "ninguno";
       code:
         | "skipped_no_email"
+        | "skipped_sin_destinatario"
         | "claim_lost"
         | "send_failed_permanente"
         | "send_failed_transitorio"
@@ -168,17 +169,10 @@ export type ProcesarResultado =
     };
 
 /**
- * Procesa un candidato: claim atómico + envío + persist resultado.
+ * Procesa un candidato: dispatch idempotente.
  *
- * Idempotencia: insert `notificaciones_enviadas (turno_id, tipo)` con
- * `ON CONFLICT DO NOTHING`. Si afectó 0 filas, otro proceso ya lo agarró.
- *
- * Manejo de errores:
- *  - Sin email cliente → no inserta el lock, devuelve "skipped_no_email".
- *  - Error Resend permanente (email inválido) → deja el row de lock con `error`,
- *    no reintenta nunca.
- *  - Error Resend transitorio → DELETE del row para permitir retry en el próximo
- *    barrido. El registro se vuelve a crear cuando se reintente.
+ * Si dry-run, NO inserta el lock NI envía. Devuelve ok=true simulado para que
+ * el caller pueda loguear "enviaria".
  */
 export async function procesarCandidato(
   db: Db,
@@ -188,11 +182,18 @@ export async function procesarCandidato(
 ): Promise<ProcesarResultado> {
   const tipoStr = TIPO_NOTIF[tipo];
 
-  if (!cand.clienteEmail) {
+  const telefonoWa = telefonoParaWa(cand.clienteTelefono);
+  const canalPrevisto = elegirCanal(cand.clienteTelefono);
+
+  // Si el canal previsto es email y el cliente no tiene email → no podemos avisar.
+  // (Cliente con teléfono y bot configurado siempre va por WA; este caso aplica
+  //  solo cuando el bot está apagado.)
+  if (canalPrevisto === "email" && !cand.clienteEmail) {
     return {
       ok: false,
       turnoId: cand.turnoId,
       tipo,
+      canal: "ninguno",
       code: "skipped_no_email",
     };
   }
@@ -202,134 +203,75 @@ export async function procesarCandidato(
       ok: true,
       turnoId: cand.turnoId,
       tipo,
+      canal: canalPrevisto,
       providerId: null,
     };
   }
 
-  // Claim atómico: si ON CONFLICT no devuelve fila, otro proceso lo agarró.
-  let claimed: { id: string } | undefined;
-  try {
-    const inserted = await db
-      .insert(notificacionesEnviadas)
-      .values({
-        turnoId: cand.turnoId,
-        tipo: tipoStr,
-      })
-      .onConflictDoNothing({
-        target: [notificacionesEnviadas.turnoId, notificacionesEnviadas.tipo],
-      })
-      .returning({ id: notificacionesEnviadas.id });
-    claimed = inserted[0];
-  } catch (err) {
-    return {
-      ok: false,
-      turnoId: cand.turnoId,
-      tipo,
-      code: "internal_error",
-      detail: err instanceof Error ? err.message : String(err),
-    };
-  }
-
-  if (!claimed) {
-    return {
-      ok: false,
-      turnoId: cand.turnoId,
-      tipo,
-      code: "claim_lost",
-    };
-  }
-
   const cancelUrl = `${opts.appUrl.replace(/\/$/, "")}/turno/${cand.cancelToken}`;
-  const rendered = renderRecordatorioCliente({
+  const emailRendered = cand.clienteEmail
+    ? renderRecordatorioCliente({
+        tipo,
+        clienteNombre: cand.clienteNombre,
+        barberoNombre: cand.barberoNombre,
+        servicioNombre: cand.servicioNombre,
+        inicio: cand.inicio,
+        duracionMin: cand.servicioDuracionMin,
+        precioTotal: cand.precioTotal,
+        cancelUrl,
+      })
+    : null;
+
+  const waText = renderRecordatorioClienteWa({
     tipo,
     clienteNombre: cand.clienteNombre,
     barberoNombre: cand.barberoNombre,
     servicioNombre: cand.servicioNombre,
     inicio: cand.inicio,
     duracionMin: cand.servicioDuracionMin,
-    precioTotal: cand.precioTotal,
     cancelUrl,
   });
 
-  let sendResult: Awaited<ReturnType<typeof sendEmail>>;
-  try {
-    sendResult = await sendEmail({
-      to: cand.clienteEmail,
-      subject: rendered.subject,
-      html: rendered.html,
-      text: rendered.text,
-    });
-  } catch (err) {
-    sendResult = {
-      ok: false,
-      error: `exception: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
+  const r = await dispatchNotificacion(db, {
+    turnoId: cand.turnoId,
+    tipo: tipoStr as "recordatorio_24h" | "recordatorio_2h",
+    destinatarioTelefono: telefonoWa,
+    destinatarioEmail: cand.clienteEmail,
+    waText,
+    emailPayload: {
+      to: cand.clienteEmail ?? "",
+      subject: emailRendered?.subject ?? "",
+      html: emailRendered?.html ?? "",
+      text: emailRendered?.text,
+    },
+  });
 
-  if (sendResult.ok) {
-    try {
-      await db
-        .update(notificacionesEnviadas)
-        .set({ proveedorId: sendResult.providerId })
-        .where(eq(notificacionesEnviadas.id, claimed.id));
-    } catch (err) {
-      // No es crítico — el lock ya quedó, no se reintenta.
-      console.warn(
-        `[recordatorio] no se pudo persistir proveedorId para ${cand.turnoId}:`,
-        err instanceof Error ? err.message : err
-      );
-    }
+  if (r.ok) {
     return {
       ok: true,
       turnoId: cand.turnoId,
       tipo,
-      providerId: sendResult.providerId,
+      canal: r.canal,
+      providerId: r.providerId,
     };
   }
 
-  // Falló el envío. Decidir si es permanente o transitorio.
-  const esPermanente =
-    sendResult.errorName !== undefined &&
-    ERROR_NAMES_PERMANENTES.has(sendResult.errorName);
-
-  if (esPermanente) {
-    // Marcamos el lock con el error y NO reintentamos.
-    try {
-      await db
-        .update(notificacionesEnviadas)
-        .set({ error: sendResult.error })
-        .where(eq(notificacionesEnviadas.id, claimed.id));
-    } catch (err) {
-      console.warn(
-        `[recordatorio] no se pudo persistir error permanente para ${cand.turnoId}:`,
-        err instanceof Error ? err.message : err
-      );
-    }
+  // Mapeo de errores
+  if (r.code === "skipped_sin_destinatario") {
     return {
       ok: false,
       turnoId: cand.turnoId,
       tipo,
-      code: "send_failed_permanente",
-      detail: sendResult.error,
+      canal: r.canal,
+      code: "skipped_sin_destinatario",
     };
-  }
-
-  // Transitorio: borramos el lock para permitir retry en el próximo barrido.
-  try {
-    await db
-      .delete(notificacionesEnviadas)
-      .where(eq(notificacionesEnviadas.id, claimed.id));
-  } catch (err) {
-    console.warn(
-      `[recordatorio] no se pudo liberar el lock tras error transitorio para ${cand.turnoId}:`,
-      err instanceof Error ? err.message : err
-    );
   }
   return {
     ok: false,
     turnoId: cand.turnoId,
     tipo,
-    code: "send_failed_transitorio",
-    detail: sendResult.error,
+    canal: r.canal,
+    code: r.code,
+    detail: r.detail,
   };
 }

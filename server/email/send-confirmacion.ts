@@ -1,53 +1,133 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
-import {
-  barberos,
-  clientes,
-  notificacionesEnviadas,
-  servicios,
-  turnos,
-} from "@/db/schema";
+import { barberos, clientes, servicios, turnos } from "@/db/schema";
 import { env } from "@/lib/env";
-import { sendEmail } from "./client";
 import { renderConfirmacionCliente } from "./templates/confirmacion-cliente";
 import { renderNotificacionBarbero } from "./templates/notificacion-barbero";
+import {
+  renderConfirmacionClienteWa,
+  renderConfirmacionBarberoWa,
+} from "@/server/whatsapp/templates";
+import {
+  dispatchNotificacion,
+  telefonoParaWa,
+} from "@/server/notif/dispatch";
 
 /**
- * Envía los emails de confirmación al crear un turno:
+ * Envía las notificaciones de confirmación al crear un turno:
  *   - cliente: confirmación de su reserva con link único de cancelación
  *   - barbero: notificación de nueva reserva con datos de contacto
  *
- * Idempotencia: por (turno_id, tipo) en `notificaciones_enviadas`.
- *   - Si ya hay registro, no reintenta (evita doble envío si se llama varias veces).
- *   - Si Resend falla, igual deja el registro con `error` para poder reintentar manual.
+ * Canal: WhatsApp si el destinatario tiene teléfono cargado y el bot está
+ * configurado; sino email. Ver `server/notif/dispatch.ts`.
+ *
+ * Idempotencia: por (turno_id, tipo, canal) en `notificaciones_enviadas`.
  *
  * Robustez: cualquier error es capturado y logueado. Esta función nunca tira —
- * el booking ya fue creado y no debe romper por una falla de email.
+ * el booking ya fue creado y no debe romper por una falla de envío.
+ *
+ * Nombre histórico (`sendConfirmacionEmails`) se mantiene para no tocar callers,
+ * aunque hoy puede mandar WA.
  */
 export async function sendConfirmacionEmails(turnoId: string): Promise<void> {
   try {
     const ctx = await loadTurnoContext(turnoId);
     if (!ctx) {
-      console.warn(`[email] turno no encontrado: ${turnoId}`);
+      console.warn(`[notif] turno no encontrado: ${turnoId}`);
       return;
     }
 
-    await Promise.all([
-      // Solo si el cliente tiene email cargado. Walk-ins admin pueden no tenerlo.
-      ctx.clienteEmail
-        ? sendOnce(turnoId, "confirmacion_cliente", () =>
-            enviarConfirmacionCliente(ctx as TurnoCtx & { clienteEmail: string })
-          )
-        : Promise.resolve(),
-      // Solo si el barbero tiene email cargado.
-      ctx.barberoEmail
-        ? sendOnce(turnoId, "confirmacion_barbero", () =>
-            enviarNotificacionBarbero(ctx)
-          )
-        : Promise.resolve(),
-    ]);
+    const cancelUrl = `${env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "")}/turno/${ctx.cancelToken}`;
+    const adminUrl = `${env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "")}/admin/agenda`;
+
+    // -- Cliente --
+    if (ctx.clienteEmail || ctx.clienteTelefono) {
+      const emailRendered = ctx.clienteEmail
+        ? renderConfirmacionCliente({
+            clienteNombre: ctx.clienteNombre,
+            barberoNombre: ctx.barberoNombre,
+            servicioNombre: ctx.servicioNombre,
+            inicio: ctx.inicio,
+            duracionMin: ctx.servicioDuracionMin,
+            precioTotal: ctx.precioTotal,
+            cancelUrl,
+          })
+        : null;
+
+      const waText = renderConfirmacionClienteWa({
+        clienteNombre: ctx.clienteNombre,
+        barberoNombre: ctx.barberoNombre,
+        servicioNombre: ctx.servicioNombre,
+        inicio: ctx.inicio,
+        duracionMin: ctx.servicioDuracionMin,
+        precioTotal: ctx.precioTotal,
+        cancelUrl,
+      });
+
+      const r = await dispatchNotificacion(db, {
+        turnoId,
+        tipo: "confirmacion_cliente",
+        destinatarioTelefono: telefonoParaWa(ctx.clienteTelefono),
+        destinatarioEmail: ctx.clienteEmail,
+        waText,
+        emailPayload: {
+          to: ctx.clienteEmail ?? "",
+          subject: emailRendered?.subject ?? "",
+          html: emailRendered?.html ?? "",
+          text: emailRendered?.text,
+        },
+      });
+
+      logDispatchResult("confirmacion_cliente", turnoId, r);
+    }
+
+    // -- Barbero --
+    // Solo si tiene email o teléfono cargado. Si null en ambos → barbero no
+    // recibe notificación.
+    if (ctx.barberoEmail || ctx.barberoTelefono) {
+      const emailRendered = ctx.barberoEmail
+        ? renderNotificacionBarbero({
+            barberoNombre: ctx.barberoNombre,
+            clienteNombre: ctx.clienteNombre,
+            clienteTelefono: ctx.clienteTelefono,
+            clienteEmail: ctx.clienteEmail ?? "",
+            servicioNombre: ctx.servicioNombre,
+            inicio: ctx.inicio,
+            duracionMin: ctx.servicioDuracionMin,
+            precioTotal: ctx.precioTotal,
+            adminUrl,
+          })
+        : null;
+
+      const waText = renderConfirmacionBarberoWa({
+        barberoNombre: ctx.barberoNombre,
+        clienteNombre: ctx.clienteNombre,
+        clienteTelefono: ctx.clienteTelefono,
+        servicioNombre: ctx.servicioNombre,
+        inicio: ctx.inicio,
+        duracionMin: ctx.servicioDuracionMin,
+        precioTotal: ctx.precioTotal,
+      });
+
+      const r = await dispatchNotificacion(db, {
+        turnoId,
+        tipo: "confirmacion_barbero",
+        destinatarioTelefono: telefonoParaWa(ctx.barberoTelefono),
+        destinatarioEmail: ctx.barberoEmail,
+        waText,
+        emailPayload: {
+          to: ctx.barberoEmail ?? "",
+          subject: emailRendered?.subject ?? "",
+          html: emailRendered?.html ?? "",
+          text: emailRendered?.text,
+          ...(ctx.clienteEmail ? { replyTo: ctx.clienteEmail } : {}),
+        },
+      });
+
+      logDispatchResult("confirmacion_barbero", turnoId, r);
+    }
   } catch (err) {
-    console.error("[email.sendConfirmacionEmails] error fatal", err);
+    console.error("[notif.sendConfirmacionEmails] error fatal", err);
   }
 }
 
@@ -61,6 +141,7 @@ type TurnoCtx = {
   clienteEmail: string | null;
   barberoNombre: string;
   barberoEmail: string | null;
+  barberoTelefono: string | null;
   servicioNombre: string;
   servicioDuracionMin: number;
 };
@@ -77,6 +158,7 @@ async function loadTurnoContext(turnoId: string): Promise<TurnoCtx | null> {
       clienteEmail: clientes.email,
       barberoNombre: barberos.nombre,
       barberoEmail: barberos.email,
+      barberoTelefono: barberos.telefono,
       servicioNombre: servicios.nombre,
       servicioDuracionMin: servicios.duracionMin,
     })
@@ -90,101 +172,30 @@ async function loadTurnoContext(turnoId: string): Promise<TurnoCtx | null> {
   return row ?? null;
 }
 
-async function enviarConfirmacionCliente(
-  ctx: TurnoCtx & { clienteEmail: string }
-) {
-  const cancelUrl = `${env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "")}/turno/${ctx.cancelToken}`;
-  const rendered = renderConfirmacionCliente({
-    clienteNombre: ctx.clienteNombre,
-    barberoNombre: ctx.barberoNombre,
-    servicioNombre: ctx.servicioNombre,
-    inicio: ctx.inicio,
-    duracionMin: ctx.servicioDuracionMin,
-    precioTotal: ctx.precioTotal,
-    cancelUrl,
-  });
-
-  return sendEmail({
-    to: ctx.clienteEmail,
-    subject: rendered.subject,
-    html: rendered.html,
-    text: rendered.text,
-  });
-}
-
-async function enviarNotificacionBarbero(ctx: TurnoCtx) {
-  if (!ctx.barberoEmail) {
-    return { ok: false as const, error: "barbero_sin_email" };
-  }
-  const adminUrl = `${env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "")}/admin/agenda`;
-  const rendered = renderNotificacionBarbero({
-    barberoNombre: ctx.barberoNombre,
-    clienteNombre: ctx.clienteNombre,
-    clienteTelefono: ctx.clienteTelefono,
-    clienteEmail: ctx.clienteEmail ?? "",
-    servicioNombre: ctx.servicioNombre,
-    inicio: ctx.inicio,
-    duracionMin: ctx.servicioDuracionMin,
-    precioTotal: ctx.precioTotal,
-    adminUrl,
-  });
-
-  return sendEmail({
-    to: ctx.barberoEmail,
-    subject: rendered.subject,
-    html: rendered.html,
-    text: rendered.text,
-    // reply-to solo si hay email — sino el barbero respondería a vacío.
-    ...(ctx.clienteEmail ? { replyTo: ctx.clienteEmail } : {}),
-  });
-}
-
-/**
- * Idempotencia: si ya hay registro (turnoId, tipo), skip.
- * Sino, envía y guarda el resultado (proveedor_id en éxito, error en fallo).
- */
-async function sendOnce(
+function logDispatchResult(
+  tipo: string,
   turnoId: string,
-  tipo: "confirmacion_cliente" | "confirmacion_barbero",
-  send: () => Promise<{ ok: true; providerId: string | null } | { ok: false; error: string }>
-): Promise<void> {
-  const yaEnviadas = await db
-    .select({ tipo: notificacionesEnviadas.tipo })
-    .from(notificacionesEnviadas)
-    .where(eq(notificacionesEnviadas.turnoId, turnoId));
-
-  if (yaEnviadas.some((r) => r.tipo === tipo)) {
+  r: Awaited<ReturnType<typeof dispatchNotificacion>>
+): void {
+  if (r.ok) {
+    console.log(
+      `[notif] ${tipo} enviado via ${r.canal} turnoId=${turnoId} providerId=${r.providerId ?? "n/a"}`
+    );
     return;
   }
-
-  let result: { ok: true; providerId: string | null } | { ok: false; error: string };
-  try {
-    result = await send();
-  } catch (err) {
-    result = {
-      ok: false,
-      error: `exception: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-
-  try {
-    await db.insert(notificacionesEnviadas).values({
-      turnoId,
-      tipo,
-      proveedorId: result.ok ? result.providerId : null,
-      error: result.ok ? null : result.error,
-    });
-  } catch (err) {
-    // Si dos invocaciones simultáneas chocan en el unique constraint, no es problema.
+  if (r.code === "skipped_sin_destinatario") {
     console.warn(
-      `[email] no se pudo registrar notificacion (${tipo}, ${turnoId}):`,
-      err instanceof Error ? err.message : err
+      `[notif] ${tipo} skip: sin destinatario para ${r.canal} turnoId=${turnoId}`
     );
+    return;
   }
-
-  if (!result.ok) {
-    console.error(
-      `[email] envío fallido (${tipo}, ${turnoId}): ${result.error}`
+  if (r.code === "claim_lost") {
+    console.log(
+      `[notif] ${tipo} ya enviado por otro proceso (canal=${r.canal}) turnoId=${turnoId}`
     );
+    return;
   }
+  console.error(
+    `[notif] ${tipo} fallo (canal=${r.canal}, code=${r.code}) turnoId=${turnoId}: ${r.detail ?? ""}`
+  );
 }

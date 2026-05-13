@@ -37,6 +37,7 @@ export const COPY = {
       agenda: "Agenda",
       clientes: "Clientes",
       configuracion: "Configuración",
+      whatsapp: "WhatsApp",
     },
     config: {
       title: "Configuración",
@@ -110,7 +111,11 @@ export const COPY = {
           "Una línea sobre el barbero. Aparece en el paso 1 de la reserva.",
         email: "Email del barbero",
         emailHint:
-          "Recibe aviso cuando le reservan un turno. Dejá en blanco para no notificar.",
+          "Recibe aviso cuando le reservan un turno. Dejá en blanco para no notificar por email.",
+        telefono: "WhatsApp del barbero",
+        telefonoPlaceholder: "11 5050 5050",
+        telefonoHint:
+          "Si está cargado, los avisos se envían por WhatsApp (reemplaza el email). Formato libre, lo normalizamos.",
         orden: "Orden",
         ordenHint:
           "Posición en el listado. Menor número aparece primero (0 = primero).",

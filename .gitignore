@@ -49,6 +49,12 @@ drizzle/.snapshots
 # local postgres data (docker volume mount)
 .postgres-data/
 
+# whatsapp bot auth state (Baileys creds) — NUNCA commitear, son credenciales
+.wa-auth/
+services/whatsapp-bot/.auth/
+services/whatsapp-bot/dist/
+services/whatsapp-bot/node_modules/
+
 # playwright
 /test-results/
 /playwright-report/

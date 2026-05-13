@@ -44,6 +44,14 @@ const envSchema = z.object({
 
   TIMEZONE: z.string().optional().default("America/Argentina/Buenos_Aires"),
 
+  // --- WhatsApp bot (servicio interno Baileys) ---
+  // URL del bot (http://localhost:3001 en dev, http://hlstudio-wa-bot:3001 en compose).
+  // Si está vacía, la app NO intenta enviar WhatsApp y cae al fallback email.
+  WHATSAPP_BOT_URL: z.string().optional().default(""),
+  // Bearer token compartido entre app y bot. Opcional en dev (el bot lo exige solo si
+  // está seteado de su lado). Recomendado >= 32 chars en prod.
+  WHATSAPP_BOT_TOKEN: z.string().optional().default(""),
+
   NODE_ENV: z
     .enum(["development", "test", "production"])
     .optional()
