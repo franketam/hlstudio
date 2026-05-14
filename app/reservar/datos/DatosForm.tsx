@@ -58,15 +58,18 @@ export function DatosForm({ barberoId, servicioId, inicioIso }: Props) {
   return (
     <form
       onSubmit={handleSubmit(onSubmit)}
-      noValidate
       className="space-y-5"
       aria-busy={pending}
     >
       <div className="space-y-2">
-        <Label htmlFor="nombre">Nombre y apellido</Label>
+        <Label htmlFor="nombre">
+          Nombre y apellido <span aria-hidden="true" className="text-destructive">*</span>
+        </Label>
         <Input
           id="nombre"
           autoComplete="name"
+          required
+          aria-required="true"
           aria-invalid={errors.nombre ? "true" : "false"}
           aria-describedby={errors.nombre ? "nombre-error" : undefined}
           {...register("nombre")}
@@ -79,13 +82,17 @@ export function DatosForm({ barberoId, servicioId, inicioIso }: Props) {
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="telefono">Teléfono</Label>
+        <Label htmlFor="telefono">
+          Teléfono <span aria-hidden="true" className="text-destructive">*</span>
+        </Label>
         <Input
           id="telefono"
           type="tel"
           inputMode="tel"
           autoComplete="tel"
           placeholder="11 5555-5555"
+          required
+          aria-required="true"
           aria-invalid={errors.telefono ? "true" : "false"}
           aria-describedby={errors.telefono ? "telefono-error" : undefined}
           {...register("telefono")}
@@ -98,12 +105,16 @@ export function DatosForm({ barberoId, servicioId, inicioIso }: Props) {
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="email">Email</Label>
+        <Label htmlFor="email">
+          Email <span aria-hidden="true" className="text-destructive">*</span>
+        </Label>
         <Input
           id="email"
           type="email"
           inputMode="email"
           autoComplete="email"
+          required
+          aria-required="true"
           aria-invalid={errors.email ? "true" : "false"}
           aria-describedby={errors.email ? "email-error" : undefined}
           {...register("email")}
