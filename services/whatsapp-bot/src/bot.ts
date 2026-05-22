@@ -3,6 +3,7 @@ import {
   DisconnectReason,
   useMultiFileAuthState,
   Browsers,
+  fetchLatestBaileysVersion,
   type WASocket,
   type ConnectionState,
   type WAMessage,
@@ -69,8 +70,21 @@ export class WhatsAppBot {
 
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
 
+    // La versión de WhatsApp Web cambia seguido; si Baileys usa la hardcoded
+    // los servidores rechazan el handshake con 405. fetchLatestBaileysVersion
+    // consulta el endpoint oficial en runtime.
+    let waVersion: [number, number, number] | undefined;
+    try {
+      const { version, isLatest } = await fetchLatestBaileysVersion();
+      waVersion = version;
+      logger.info({ version, isLatest }, "wa version resuelta");
+    } catch (err) {
+      logger.warn({ err }, "no se pudo fetchear la version de WA, usando default de baileys");
+    }
+
     const sock = makeWASocket({
       auth: state,
+      version: waVersion,
       printQRInTerminal: false,
       browser: Browsers.macOS("HLstudio-Bot"),
       logger: logger.child({ mod: "baileys" }) as unknown as pino.Logger,
