@@ -11,6 +11,7 @@ import {
   ymdLocal,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { CancelarTurnoAdminButton } from "./CancelarTurnoAdminButton";
 
 export const metadata = {
   title: "Agenda",
@@ -151,6 +152,14 @@ export default async function AdminAgendaPage({
                     </span>
                   </div>
                 </div>
+                {!cancelado ? (
+                  <div className="mt-4 flex justify-end border-t border-border/60 pt-3">
+                    <CancelarTurnoAdminButton
+                      turnoId={t.id}
+                      resumen={`${horaCortaAR(t.inicioTs)} — ${t.clienteNombre} · ${t.servicioNombre}`}
+                    />
+                  </div>
+                ) : null}
               </li>
             );
           })}

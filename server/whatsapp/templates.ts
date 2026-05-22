@@ -132,3 +132,64 @@ export function renderRecordatorioClienteWa(
     `Si no podés venir, comunicate con el barbero — ya pasó la ventana de cancelación online.`,
   ].join("\n");
 }
+
+// -------------------------------------------------------------------------
+// 4. Cancelación: el admin canceló el turno (aviso al cliente)
+// -------------------------------------------------------------------------
+
+export type CancelacionClienteWaData = {
+  clienteNombre: string;
+  barberoNombre: string;
+  servicioNombre: string;
+  inicio: Date;
+  reservarUrl: string;
+};
+
+export function renderCancelacionClienteWa(
+  data: CancelacionClienteWaData
+): string {
+  const fecha = fechaLargaAR(data.inicio);
+  const hora = horaCortaAR(data.inicio);
+
+  return [
+    `Hola ${data.clienteNombre}, tu turno en *HLstudio* fue cancelado.`,
+    ``,
+    `📅 ${fecha} · ${hora} hs`,
+    `✂️ ${data.servicioNombre}`,
+    `👤 Barbero: ${data.barberoNombre}`,
+    ``,
+    `Si querés, podés reservar otro horario acá:`,
+    data.reservarUrl,
+    ``,
+    `Disculpá las molestias.`,
+  ].join("\n");
+}
+
+// -------------------------------------------------------------------------
+// 5. Cancelación: aviso al barbero
+// -------------------------------------------------------------------------
+
+export type CancelacionBarberoWaData = {
+  barberoNombre: string;
+  clienteNombre: string;
+  clienteTelefono: string;
+  servicioNombre: string;
+  inicio: Date;
+};
+
+export function renderCancelacionBarberoWa(
+  data: CancelacionBarberoWaData
+): string {
+  const fecha = fechaLargaAR(data.inicio);
+  const hora = horaCortaAR(data.inicio);
+
+  return [
+    `Se *canceló* un turno.`,
+    ``,
+    `📅 ${fecha} · ${hora} hs`,
+    `✂️ ${data.servicioNombre}`,
+    ``,
+    `👤 ${data.clienteNombre}`,
+    `📱 ${data.clienteTelefono}`,
+  ].join("\n");
+}

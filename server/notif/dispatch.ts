@@ -33,7 +33,9 @@ export type DispatchTipo =
   | "confirmacion_cliente"
   | "confirmacion_barbero"
   | "recordatorio_24h"
-  | "recordatorio_2h";
+  | "recordatorio_2h"
+  | "cancelacion_cliente"
+  | "cancelacion_barbero";
 
 /**
  * Input para WA + Email: ambos payloads se proveen, el dispatcher elige según

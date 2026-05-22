@@ -17,6 +17,7 @@ import { getAvailableSlots, rangesOverlap } from "@/lib/availability";
 import { getSession } from "@/lib/session";
 import { ymdLocal } from "@/lib/format";
 import { sendConfirmacionEmails } from "@/server/email/send-confirmacion";
+import { sendCancelacionNotifs } from "@/server/email/send-cancelacion";
 
 /**
  * Server actions del panel admin para `/admin/agenda`.
@@ -476,4 +477,101 @@ export async function createTurnoAdminAction(
     ok: true,
     data: { turnoId },
   };
+}
+
+// ---------------------------------------------------------------------------
+// 4. cancelTurnoAdminAction — cancela un turno desde la agenda admin
+// ---------------------------------------------------------------------------
+
+const cancelInputSchema = z.object({
+  turnoId: z.string().uuid("Turno inválido."),
+});
+
+export type CancelTurnoAdminInput = z.input<typeof cancelInputSchema>;
+
+/**
+ * Cancela un turno desde el panel admin.
+ *
+ * A diferencia del flow público (`cancelTurno` en `server/actions/booking.ts`):
+ *  - No requiere cancel_token (lo hace el admin con sesión).
+ *  - No exige ventana de 3 hs: el dueño puede cancelar en cualquier momento.
+ *  - Marca `cancelado_admin` (distinto de `cancelado_cliente`) para diferenciar
+ *    auditorialmente quién canceló.
+ *
+ * Idempotente: si el turno ya está cancelado, devuelve `estado_invalido` (no
+ * doble-cancela, no rompe el flujo si se clickea dos veces).
+ */
+export async function cancelTurnoAdminAction(
+  input: CancelTurnoAdminInput
+): Promise<ActionResult<{ turnoId: string }>> {
+  const auth = await requireSession();
+  if (auth) return auth;
+
+  const parsed = cancelInputSchema.safeParse(input);
+  if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    return {
+      ok: false,
+      error: {
+        code: "validation_error",
+        message: first?.message ?? "Datos inválidos.",
+      },
+    };
+  }
+
+  const { turnoId } = parsed.data;
+
+  const [row] = await db
+    .select({
+      id: turnos.id,
+      estado: turnos.estado,
+      inicioTs: turnos.inicioTs,
+    })
+    .from(turnos)
+    .where(eq(turnos.id, turnoId))
+    .limit(1);
+
+  if (!row) {
+    return {
+      ok: false,
+      error: { code: "no_encontrado", message: "Turno no encontrado." },
+    };
+  }
+
+  if (row.estado !== "confirmado") {
+    return {
+      ok: false,
+      error: {
+        code: "estado_invalido",
+        message: "Este turno ya no está activo.",
+      },
+    };
+  }
+
+  try {
+    await db
+      .update(turnos)
+      .set({ estado: "cancelado_admin", updatedAt: new Date() })
+      .where(eq(turnos.id, turnoId));
+  } catch (err) {
+    console.error("[admin.agenda.cancelTurno] error", err);
+    return {
+      ok: false,
+      error: {
+        code: "internal_error",
+        message: "No pudimos cancelar el turno. Probá de nuevo.",
+      },
+    };
+  }
+
+  // Aviso a cliente y barbero. Fire-and-forget: ya cancelamos en BD, una falla
+  // de notif no debe romper el flujo. `sendCancelacionNotifs` captura todo.
+  void sendCancelacionNotifs(turnoId);
+
+  const fechaYmd = ymdLocal(row.inicioTs);
+  revalidatePath("/admin");
+  revalidatePath("/admin/agenda");
+  revalidatePath(`/admin/agenda?fecha=${fechaYmd}`);
+
+  return { ok: true, data: { turnoId } };
 }
