@@ -50,14 +50,17 @@ RUN node_modules/.bin/esbuild db/migrate.ts db/seed.ts \
     --outdir=dist/scripts --out-extension:.js=.mjs \
     --tsconfig=tsconfig.json
 
-# --- runtime layer ---
-FROM base AS runner
+# --- runtime layer (hardened: solo lo mínimo, sin wget/curl) ---
+FROM node:22-alpine AS runner
+RUN apk add --no-cache libc6-compat tzdata && \
+    rm -f /usr/bin/wget /usr/bin/curl 2>/dev/null; true
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 # TZ del proceso Node — refuerza la TZ que usa date-fns-tz vía Intl.
 ENV TZ=America/Argentina/Buenos_Aires
+WORKDIR /app
 
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs

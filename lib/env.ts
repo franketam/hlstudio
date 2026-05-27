@@ -62,13 +62,35 @@ const envSchema = z.object({
     .default("development"),
 });
 
-function parseEnv() {
+type EnvData = z.infer<typeof envSchema>;
+
+const IS_BUILD = process.env.NEXT_PHASE === "phase-production-build";
+
+function parseEnv(): EnvData {
   const parsed = envSchema.safeParse(process.env);
   if (!parsed.success) {
+    if (IS_BUILD) {
+      // During `next build`, env vars may be incomplete (placeholders in Docker,
+      // or missing locally). Don't crash — the real values are injected at runtime.
+      return {
+        DATABASE_URL: process.env.DATABASE_URL ?? "postgresql://build:build@localhost:5432/build",
+        ADMIN_EMAIL: process.env.ADMIN_EMAIL ?? "build@example.com",
+        ADMIN_PASSWORD: process.env.ADMIN_PASSWORD ?? "build",
+        SESSION_PASSWORD: process.env.SESSION_PASSWORD ?? "a".repeat(32),
+        CANCEL_TOKEN_SECRET: process.env.CANCEL_TOKEN_SECRET ?? "a".repeat(32),
+        RESEND_API_KEY: "",
+        RESEND_FROM_EMAIL: "onboarding@resend.dev",
+        RESEND_FROM_NAME: "HLstudio",
+        NEXT_PUBLIC_APP_URL: "http://localhost:3000",
+        TIMEZONE: "America/Argentina/Buenos_Aires",
+        WHATSAPP_BOT_URL: "",
+        WHATSAPP_BOT_TOKEN: "",
+        NODE_ENV: "production",
+      };
+    }
     const issues = parsed.error.issues
       .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
       .join("\n");
-    // Imprimimos clarito y abortamos: la app no debe arrancar con env inválido.
     console.error(
       `\n[env] Variables de entorno inválidas o faltantes:\n${issues}\n`
     );
@@ -77,5 +99,13 @@ function parseEnv() {
   return parsed.data;
 }
 
-export const env = parseEnv();
-export type Env = typeof env;
+let _cached: EnvData | undefined;
+
+export const env: EnvData = new Proxy({} as EnvData, {
+  get(_, prop: string) {
+    if (!_cached) _cached = parseEnv();
+    return _cached[prop as keyof EnvData];
+  },
+});
+
+export type Env = EnvData;
