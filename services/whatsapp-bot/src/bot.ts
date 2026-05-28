@@ -7,6 +7,7 @@ import {
   type WASocket,
   type ConnectionState,
   type WAMessage,
+  type proto,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import pino from "pino";
@@ -30,6 +31,12 @@ import { rm } from "node:fs/promises";
 
 const logger = pino({ level: process.env.LOG_LEVEL ?? "info" });
 
+// Cuántos mensajes enviados retenemos para responder pedidos de reintento.
+// Cuando un destinatario no puede descifrar (sesión desincronizada, típico en
+// iOS), WhatsApp pide reenvío y baileys nos llama `getMessage(key)`. Si no lo
+// tenemos cacheado, el destinatario queda en "Waiting for this message".
+const SENT_CACHE_MAX = 1_000;
+
 export type BotState = "starting" | "qr" | "ready" | "logged_out" | "error";
 
 export type BotPublicStatus = {
@@ -46,6 +53,8 @@ export class WhatsAppBot {
   private lastError: string | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private starting = false;
+  // messageId -> contenido proto, para responder pedidos de reintento.
+  private readonly sentMessages = new Map<string, proto.IMessage>();
 
   constructor(private readonly authDir: string) {}
 
@@ -91,6 +100,12 @@ export class WhatsAppBot {
       generateHighQualityLinkPreview: false,
       syncFullHistory: false,
       markOnlineOnConnect: false,
+      // Reenvío en respuesta a "retry receipts". Sin esto, un destinatario que
+      // no pudo descifrar queda trabado en "Waiting for this message".
+      getMessage: async (key) => {
+        const id = key?.id;
+        return (id ? this.sentMessages.get(id) : undefined) ?? undefined;
+      },
     });
 
     this.sock = sock;
@@ -191,6 +206,14 @@ export class WhatsAppBot {
     return this.state === "ready" && this.sock !== null;
   }
 
+  private rememberSentMessage(id: string, message: proto.IMessage): void {
+    if (this.sentMessages.size >= SENT_CACHE_MAX) {
+      const oldest = this.sentMessages.keys().next().value;
+      if (oldest !== undefined) this.sentMessages.delete(oldest);
+    }
+    this.sentMessages.set(id, message);
+  }
+
   async sendText(
     to: string,
     text: string
@@ -208,7 +231,11 @@ export class WhatsAppBot {
 
     try {
       const res = await this.sock.sendMessage(jid, { text });
-      return { ok: true, messageId: res?.key?.id ?? null };
+      const id = res?.key?.id;
+      if (id && res?.message) {
+        this.rememberSentMessage(id, res.message);
+      }
+      return { ok: true, messageId: id ?? null };
     } catch (err) {
       return {
         ok: false,
