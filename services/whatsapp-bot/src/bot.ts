@@ -166,8 +166,9 @@ export class WhatsAppBot {
         const err = lastDisconnect?.error as Boom | undefined;
         const code = err?.output?.statusCode;
         const isLoggedOut = code === DisconnectReason.loggedOut;
+        const isReplaced = code === DisconnectReason.connectionReplaced;
         const msg = err?.message ?? "desconocido";
-        logger.warn({ code, isLoggedOut, msg }, "conexion cerrada");
+        logger.warn({ code, isLoggedOut, isReplaced, msg }, "conexion cerrada");
 
         this.qrDataUrl = null;
 
@@ -184,6 +185,22 @@ export class WhatsAppBot {
           }
           // Reintentar después de un tick para mostrar QR de nuevo.
           this.scheduleReconnect(2_000);
+        } else if (isReplaced) {
+          // conflict (440): OTRA conexión tomó la sesión con las mismas
+          // credenciales. Casi siempre = dos instancias del bot corriendo
+          // contra el mismo AUTH_DIR (deploy solapado / réplica duplicada), o
+          // el número abierto en otro WhatsApp Web. Reconectar a los 5s genera
+          // un ping-pong infinito que CORROMPE el cifrado (de ahí los
+          // "Waiting for this message"). Backoff largo para no pelear la sesión.
+          this.state = "error";
+          this.lastError =
+            "conflict (440): otra instancia tomo la conexion. Verificar que NO haya dos bots con el mismo AUTH_DIR.";
+          logger.error(
+            "[wa] conflict/replaced (440): otra sesion tomo la conexion. " +
+              "Probablemente hay DOS instancias del bot con las mismas credenciales. " +
+              "Backoff 60s para no perpetuar el ping-pong."
+          );
+          this.scheduleReconnect(60_000);
         } else {
           // Reintento estándar con backoff suave.
           this.state = "error";
