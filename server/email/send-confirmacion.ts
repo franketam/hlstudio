@@ -117,8 +117,10 @@ export async function sendConfirmacionEmails(turnoId: string): Promise<void> {
         precioTotal: ctx.precioTotal,
       });
 
-      // Barbero: estrategia "preferred" — WA si tiene teléfono cargado,
-      // sino email (backward compat). Sin doble envío.
+      // Barbero: estrategia "both" — WA + email en paralelo si ambos están
+      // disponibles. Garantiza que el barbero reciba el aviso aunque WhatsApp
+      // quede colgado en "Waiting for this message". Si solo tiene uno de los
+      // dos canales, manda por ese.
       const results = await dispatchNotificacion(
         db,
         {
@@ -135,7 +137,7 @@ export async function sendConfirmacionEmails(turnoId: string): Promise<void> {
             ...(ctx.clienteEmail ? { replyTo: ctx.clienteEmail } : {}),
           },
         },
-        "preferred"
+        "both"
       );
 
       for (const r of results) {

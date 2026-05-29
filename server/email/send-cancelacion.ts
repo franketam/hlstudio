@@ -20,7 +20,7 @@ import {
  *
  * Mismas reglas que `sendConfirmacionEmails`:
  *   - Cliente: estrategia "both" (WA + email en paralelo si ambos disponibles).
- *   - Barbero: estrategia "preferred" (WA si tiene teléfono, sino email).
+ *   - Barbero: estrategia "both" (WA + email en paralelo si ambos disponibles).
  *   - Idempotencia por (turno_id, tipo, canal) — `cancelacion_cliente` y
  *     `cancelacion_barbero` no chocan con tipos previos.
  *
@@ -102,6 +102,8 @@ export async function sendCancelacionNotifs(turnoId: string): Promise<void> {
         inicio: ctx.inicio,
       });
 
+      // Barbero: estrategia "both" — WA + email en paralelo si ambos están
+      // disponibles, así el aviso llega aunque WhatsApp quede colgado.
       const results = await dispatchNotificacion(
         db,
         {
@@ -117,7 +119,7 @@ export async function sendCancelacionNotifs(turnoId: string): Promise<void> {
             text: emailRendered?.text,
           },
         },
-        "preferred"
+        "both"
       );
 
       for (const r of results) {
