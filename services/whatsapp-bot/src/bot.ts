@@ -7,6 +7,8 @@ import {
   type WASocket,
   type ConnectionState,
   type WAMessage,
+  type WAMessageUpdate,
+  type MessageUserReceiptUpdate,
   type proto,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
@@ -36,6 +38,23 @@ const logger = pino({ level: process.env.LOG_LEVEL ?? "info" });
 // iOS), WhatsApp pide reenvío y baileys nos llama `getMessage(key)`. Si no lo
 // tenemos cacheado, el destinatario queda en "Waiting for this message".
 const SENT_CACHE_MAX = 1_000;
+
+// Nombres de proto.WebMessageInfo.Status, para loguear la progresión de
+// entrega de forma legible. Si nunca llega a DELIVERY_ACK, el destinatario
+// no lo recibió (queda en "Waiting for this message").
+const STATUS_NAMES = [
+  "ERROR",
+  "PENDING",
+  "SERVER_ACK",
+  "DELIVERY_ACK",
+  "READ",
+  "PLAYED",
+] as const;
+
+function statusName(status: number | null | undefined): string {
+  if (typeof status !== "number") return String(status);
+  return STATUS_NAMES[status] ?? String(status);
+}
 
 export type BotState = "starting" | "qr" | "ready" | "logged_out" | "error";
 
@@ -104,7 +123,14 @@ export class WhatsAppBot {
       // no pudo descifrar queda trabado en "Waiting for this message".
       getMessage: async (key) => {
         const id = key?.id;
-        return (id ? this.sentMessages.get(id) : undefined) ?? undefined;
+        const found = id ? this.sentMessages.get(id) : undefined;
+        // Si nos llaman acá es porque el destinatario no pudo descifrar y pidió
+        // reenvío: señal directa del problema "Waiting for this message".
+        logger.info(
+          { msgId: id, remoteJid: key?.remoteJid, cacheHit: Boolean(found) },
+          "[wa] retry: getMessage solicitado"
+        );
+        return found ?? undefined;
       },
     });
 
@@ -172,6 +198,39 @@ export class WhatsAppBot {
       // No-op intencional. Si se quiere agregar respuestas automáticas, va acá.
       logger.debug({ count: m.messages.length }, "messages.upsert");
     });
+
+    // Progresión de estado de los mensajes que mandamos. Es el indicador más
+    // directo: si un mensaje no pasa de SERVER_ACK a DELIVERY_ACK, el
+    // destinatario no lo recibió (se quedó en "Waiting for this message").
+    sock.ev.on("messages.update", (updates: WAMessageUpdate[]) => {
+      for (const u of updates) {
+        if (typeof u.update?.status !== "number") continue;
+        logger.info(
+          {
+            msgId: u.key?.id,
+            remoteJid: u.key?.remoteJid,
+            status: statusName(u.update?.status),
+          },
+          "[wa] messages.update"
+        );
+      }
+    });
+
+    // Recibos de entrega/lectura por destinatario.
+    sock.ev.on("message-receipt.update", (updates: MessageUserReceiptUpdate[]) => {
+      for (const u of updates) {
+        logger.info(
+          {
+            msgId: u.key?.id,
+            remoteJid: u.key?.remoteJid,
+            userJid: u.receipt?.userJid,
+            delivered: Boolean(u.receipt?.receiptTimestamp),
+            read: Boolean(u.receipt?.readTimestamp),
+          },
+          "[wa] message-receipt.update"
+        );
+      }
+    });
   }
 
   private scheduleReconnect(delayMs: number): void {
@@ -227,7 +286,26 @@ export class WhatsAppBot {
     if (digits.length < 8 || digits.length > 15) {
       return { ok: false, error: `numero invalido: ${to}` };
     }
-    const jid = `${digits}@s.whatsapp.net`;
+    let jid = `${digits}@s.whatsapp.net`;
+
+    // Validar/normalizar contra WhatsApp: devuelve el JID canónico y, si aplica,
+    // el LID (direccionamiento nuevo, sospechoso del bug "Waiting for this
+    // message"). Best-effort: si falla, seguimos con el JID construido a mano.
+    try {
+      const results = await this.sock.onWhatsApp(jid);
+      const hit = results?.[0];
+      if (hit?.exists) {
+        logger.info(
+          { to: digits, canonical: hit.jid, lid: hit.lid ?? null },
+          "[wa] onWhatsApp resuelto"
+        );
+        if (typeof hit.jid === "string" && hit.jid) jid = hit.jid;
+      } else {
+        logger.warn({ to: digits }, "[wa] onWhatsApp: numero sin cuenta de WhatsApp o sin resultado");
+      }
+    } catch (err) {
+      logger.warn({ to: digits, err }, "[wa] onWhatsApp fallo, uso JID construido");
+    }
 
     try {
       const res = await this.sock.sendMessage(jid, { text });
@@ -235,6 +313,7 @@ export class WhatsAppBot {
       if (id && res?.message) {
         this.rememberSentMessage(id, res.message);
       }
+      logger.info({ jid, msgId: id }, "[wa] sendMessage enviado");
       return { ok: true, messageId: id ?? null };
     } catch (err) {
       return {
