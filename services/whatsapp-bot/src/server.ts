@@ -80,6 +80,22 @@ app.post("/send", authGuard, async (req, res) => {
   }
 });
 
+// Reset manual de la sesión de cifrado de un número. Fuerza renegociación
+// fresca en el próximo envío (mitigación "Waiting for this message").
+app.post("/reset-session", authGuard, async (req, res) => {
+  const body = req.body as { to?: unknown };
+  if (typeof body.to !== "string") {
+    res.status(400).json({ ok: false, error: "body invalido: to requerido" });
+    return;
+  }
+  const r = await bot.resetSessionFor(body.to);
+  if (r.ok) {
+    res.json({ ok: true, deleted: r.deleted });
+  } else {
+    res.status(400).json({ ok: false, error: r.error });
+  }
+});
+
 // Manejo de errores: log + 500 genérico, no leakear stack.
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   logger.error({ err }, "uncaught express error");

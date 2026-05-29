@@ -14,7 +14,8 @@ import {
 import { Boom } from "@hapi/boom";
 import pino from "pino";
 import QRCode from "qrcode";
-import { rm } from "node:fs/promises";
+import { rm, readdir, unlink } from "node:fs/promises";
+import { join } from "node:path";
 
 /**
  * Wrapper de Baileys con estado en memoria para la API HTTP.
@@ -265,6 +266,51 @@ export class WhatsAppBot {
     return this.state === "ready" && this.sock !== null;
   }
 
+  /**
+   * Borra los archivos de sesión Signal del destinatario en AUTH_DIR, forzando
+   * una renegociación fresca en el próximo envío. Es la mitigación al bug
+   * "Waiting for this message": la sesión de cifrado se vuelve rancia (sobre
+   * todo contra iOS) y el destinatario no puede descifrar.
+   *
+   * Solo toca `session-<user>.<device>.json` del número dado — NO creds,
+   * prekeys, app-state ni sender-keys. Best-effort: loguea y nunca tira.
+   */
+  private async resetSession(digits: string): Promise<number> {
+    const prefix = `session-${digits}.`;
+    let deleted = 0;
+    try {
+      const files = await readdir(this.authDir);
+      for (const f of files) {
+        if (f.startsWith(prefix) && f.endsWith(".json")) {
+          try {
+            await unlink(join(this.authDir, f));
+            deleted++;
+          } catch {
+            // ya no está / carrera con otro envío — ignorar
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn({ digits, err }, "[wa] resetSession: no se pudo leer AUTH_DIR");
+      return 0;
+    }
+    if (deleted > 0) {
+      logger.info({ digits, deleted }, "[wa] sesión limpiada, renegocia en el envío");
+    }
+    return deleted;
+  }
+
+  /** Reset manual de sesión por número (para el endpoint /reset-session). */
+  async resetSessionFor(
+    to: string
+  ): Promise<{ ok: true; deleted: number } | { ok: false; error: string }> {
+    const digits = to.replace(/^\+/, "").replace(/\D/g, "");
+    if (digits.length < 8 || digits.length > 15) {
+      return { ok: false, error: `numero invalido: ${to}` };
+    }
+    return { ok: true, deleted: await this.resetSession(digits) };
+  }
+
   private rememberSentMessage(id: string, message: proto.IMessage): void {
     if (this.sentMessages.size >= SENT_CACHE_MAX) {
       const oldest = this.sentMessages.keys().next().value;
@@ -306,6 +352,11 @@ export class WhatsAppBot {
     } catch (err) {
       logger.warn({ to: digits, err }, "[wa] onWhatsApp fallo, uso JID construido");
     }
+
+    // Limpiar la sesión del destinatario antes de enviar: fuerza una
+    // renegociación fresca y esquiva el bug de sesión rancia ("Waiting for
+    // this message"). Costo trivial para el volumen de un local.
+    await this.resetSession(digits);
 
     try {
       const res = await this.sock.sendMessage(jid, { text });
