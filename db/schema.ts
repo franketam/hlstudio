@@ -187,6 +187,49 @@ export const bloqueosAgenda = pgTable(
 );
 
 /**
+ * Bloqueos recurrentes por barbero y día de semana.
+ *
+ * Distinto de:
+ *  - `diasDescansoRecurrente`: cierra el LOCAL entero un día de semana (global).
+ *  - `bloqueosAgenda`: bloqueo PUNTUAL con rango de fecha/hora concreto.
+ *
+ * Este modela "el barbero X no atiende todos los <dia_semana> de <desde_hora> a
+ * <hasta_hora>", recurrente cada semana indefinidamente. Siempre por barbero
+ * (si quisieran cerrar el local entero un día → diasDescansoRecurrente).
+ *
+ * Franja:
+ *  - `[desde_hora, hasta_hora)` semi-abierta, interpretada en la TZ del local
+ *    sobre la fecha concreta consultada (igual que horarios_operacion).
+ *  - Día completo = cargar 00:00:00 → 23:59:59 (o 24:00 si el editor lo permite).
+ */
+export const bloqueosRecurrentes = pgTable(
+  "bloqueos_recurrentes",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    barberoId: uuid("barbero_id")
+      .notNull()
+      .references(() => barberos.id, { onDelete: "cascade" }),
+    diaSemana: smallint("dia_semana").notNull(), // 0 (domingo) … 6 (sábado)
+    desdeHora: time("desde_hora").notNull(), // 'HH:mm:ss' en TZ del local
+    hastaHora: time("hasta_hora").notNull(),
+    motivo: text("motivo"),
+    activo: boolean("activo").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    barberoDiaIdx: index("bloqueos_recurrentes_barbero_dia_idx").on(
+      t.barberoId,
+      t.diaSemana
+    ),
+  })
+);
+
+/**
  * Cliente final. Identificación por teléfono (E.164 normalizado).
  * Sin cuenta de auth — guest reservation.
  */
@@ -313,6 +356,8 @@ export type Turno = typeof turnos.$inferSelect;
 export type NuevoTurno = typeof turnos.$inferInsert;
 export type HorarioOperacion = typeof horariosOperacion.$inferSelect;
 export type BloqueoAgenda = typeof bloqueosAgenda.$inferSelect;
+export type BloqueoRecurrente = typeof bloqueosRecurrentes.$inferSelect;
+export type NuevoBloqueoRecurrente = typeof bloqueosRecurrentes.$inferInsert;
 export type PrecioBarberoServicio = typeof preciosBarberoServicio.$inferSelect;
 
 // Las exports `date` y `integer` no se usan acá pero se mantienen por si el schema crece.

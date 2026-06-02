@@ -5,6 +5,7 @@ import { db } from "@/db/client";
 import {
   barberos,
   bloqueosAgenda,
+  bloqueosRecurrentes,
   diasDescansoRecurrente,
   horariosOperacion,
   preciosBarberoServicio,
@@ -226,6 +227,63 @@ export async function listBloqueosVigentes(): Promise<BloqueoVigente[]> {
     .where(gte(bloqueosAgenda.hastaTs, now))
     .orderBy(asc(bloqueosAgenda.desdeTs));
   return rows;
+}
+
+export type BloqueoRecurrenteItem = {
+  id: string;
+  barberoId: string;
+  barberoNombre: string | null;
+  diaSemana: number;
+  /** "HH:MM" — sin segundos. */
+  desdeHora: string;
+  /** "HH:MM" — sin segundos. */
+  hastaHora: string;
+  motivo: string | null;
+  activo: boolean;
+};
+
+/**
+ * "HH:MM:SS" → "HH:MM" para presentación.
+ */
+function trimSecondsTime(hhmmss: string): string {
+  const parts = hhmmss.split(":");
+  const hh = (parts[0] ?? "00").padStart(2, "0");
+  const mm = (parts[1] ?? "00").padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+/**
+ * Bloqueos recurrentes (todos), ordenados por barbero → día de semana → hora.
+ * Incluye activos e inactivos: el admin ve y gestiona ambos.
+ */
+export async function listBloqueosRecurrentes(): Promise<
+  BloqueoRecurrenteItem[]
+> {
+  const rows = await db
+    .select({
+      id: bloqueosRecurrentes.id,
+      barberoId: bloqueosRecurrentes.barberoId,
+      barberoNombre: barberos.nombre,
+      diaSemana: bloqueosRecurrentes.diaSemana,
+      desdeHora: bloqueosRecurrentes.desdeHora,
+      hastaHora: bloqueosRecurrentes.hastaHora,
+      motivo: bloqueosRecurrentes.motivo,
+      activo: bloqueosRecurrentes.activo,
+    })
+    .from(bloqueosRecurrentes)
+    .leftJoin(barberos, eq(barberos.id, bloqueosRecurrentes.barberoId))
+    .orderBy(
+      asc(barberos.orden),
+      asc(barberos.nombre),
+      asc(bloqueosRecurrentes.diaSemana),
+      asc(bloqueosRecurrentes.desdeHora)
+    );
+
+  return rows.map((r) => ({
+    ...r,
+    desdeHora: trimSecondsTime(r.desdeHora),
+    hastaHora: trimSecondsTime(r.hastaHora),
+  }));
 }
 
 /**

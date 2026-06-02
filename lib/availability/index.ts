@@ -6,6 +6,7 @@ import { db } from "@/db/client";
 import {
   barberos,
   bloqueosAgenda,
+  bloqueosRecurrentes,
   diasDescansoRecurrente,
   horariosOperacion,
   servicios,
@@ -151,6 +152,27 @@ export async function getAvailableSlots(
     (bl) => bl.hastaTs > dayStartUTC && bl.desdeTs < dayEndUTC
   );
 
+  // 6.b Bloqueos recurrentes del barbero para este día de semana.
+  // Materializamos cada franja [desde_hora, hasta_hora) sobre la fecha pedida,
+  // en la TZ del local — mismo criterio que los rangos de horarios_operacion.
+  const recurrentesRows = await db
+    .select({
+      desdeHora: bloqueosRecurrentes.desdeHora,
+      hastaHora: bloqueosRecurrentes.hastaHora,
+    })
+    .from(bloqueosRecurrentes)
+    .where(
+      and(
+        eq(bloqueosRecurrentes.barberoId, barberoId),
+        eq(bloqueosRecurrentes.diaSemana, diaSemana),
+        eq(bloqueosRecurrentes.activo, true)
+      )
+    );
+  const bloqueosRecurrentesDelDia = recurrentesRows.map((r) => ({
+    desdeTs: parseTimeOnDate(fecha, r.desdeHora, tz),
+    hastaTs: parseTimeOnDate(fecha, r.hastaHora, tz),
+  }));
+
   // 7. Generar slots para cada rango horario.
   // Filtramos slots cuyo inicio cae antes de "ahora + lead time" — sin esto,
   // hoy siempre muestra horarios pasados y el cliente choca contra el check
@@ -181,8 +203,11 @@ export async function getAvailableSlots(
       const bloqueado = bloqueosDelDia.some((bl) =>
         rangesOverlap(inicio, fin, bl.desdeTs, bl.hastaTs)
       );
+      const bloqueadoRecurrente = bloqueosRecurrentesDelDia.some((bl) =>
+        rangesOverlap(inicio, fin, bl.desdeTs, bl.hastaTs)
+      );
 
-      if (!ocupado && !bloqueado) {
+      if (!ocupado && !bloqueado && !bloqueadoRecurrente) {
         out.push({
           slot: formatHHmmInTz(inicio, tz),
           inicioTs: inicio,
@@ -280,5 +305,54 @@ export async function isDiaAbierto(fecha: string): Promise<boolean> {
   if (bloqueoGlobal) return false;
 
   return true;
+}
+
+/**
+ * ¿El intervalo [inicio, fin) (UTC) cae sobre un bloqueo recurrente activo del
+ * barbero? Se usa en la creación de turno (server) para que no se cuele un turno
+ * que choca con un bloqueo recurrente, ya que esos turnos no pasan por
+ * getAvailableSlots (ej. walk-in admin con hora manual).
+ *
+ * Materializa cada franja recurrente del día de semana del `inicio` sobre la
+ * fecha local correspondiente y compara con rangesOverlap.
+ *
+ * Nota: si el turno cruzara medianoche local (raro: duración > horas hasta las
+ * 24h), sólo evaluamos el día de semana del inicio. Es aceptable: los servicios
+ * duran minutos, no cruzan días.
+ */
+export async function barberoBloqueadoRecurrente(
+  barberoId: string,
+  inicio: Date,
+  fin: Date
+): Promise<boolean> {
+  const tz = env.TIMEZONE;
+  const inicioLocal = toZonedTime(inicio, tz);
+  const diaSemana = inicioLocal.getDay();
+  const fecha = `${inicioLocal.getFullYear()}-${String(
+    inicioLocal.getMonth() + 1
+  ).padStart(2, "0")}-${String(inicioLocal.getDate()).padStart(2, "0")}`;
+
+  const rows = await db
+    .select({
+      desdeHora: bloqueosRecurrentes.desdeHora,
+      hastaHora: bloqueosRecurrentes.hastaHora,
+    })
+    .from(bloqueosRecurrentes)
+    .where(
+      and(
+        eq(bloqueosRecurrentes.barberoId, barberoId),
+        eq(bloqueosRecurrentes.diaSemana, diaSemana),
+        eq(bloqueosRecurrentes.activo, true)
+      )
+    );
+
+  return rows.some((r) =>
+    rangesOverlap(
+      inicio,
+      fin,
+      parseTimeOnDate(fecha, r.desdeHora, tz),
+      parseTimeOnDate(fecha, r.hastaHora, tz)
+    )
+  );
 }
 

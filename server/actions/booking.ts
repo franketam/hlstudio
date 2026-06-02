@@ -12,7 +12,7 @@ import {
 } from "@/db/schema";
 import { buildCancelToken, verifyCancelToken } from "@/lib/cancel-token";
 import { normalizarTelefonoAR } from "@/lib/phone";
-import { rangesOverlap } from "@/lib/availability";
+import { rangesOverlap, barberoBloqueadoRecurrente } from "@/lib/availability";
 import {
   RATE_LIMITS,
   checkRateLimitForRoute,
@@ -158,6 +158,19 @@ export async function createTurno(
   }
 
   const fin = new Date(inicio.getTime() + s.duracionMin * 60_000);
+
+  // 3.b Bloqueo recurrente del barbero (ej. no atiende los martes a la tarde).
+  // Defensa server-side: getAvailableSlots ya no ofrece estos slots, pero un
+  // cliente que mande un inicioIso a mano no debe poder colarse.
+  if (await barberoBloqueadoRecurrente(barberoId, inicio, fin)) {
+    return {
+      ok: false,
+      error: {
+        code: "barbero_bloqueado",
+        message: "Ese horario no está disponible con ese barbero. Elegí otro.",
+      },
+    };
+  }
 
   // 4. Precio del barbero para ese servicio (snapshot)
   const [precioRow] = await db

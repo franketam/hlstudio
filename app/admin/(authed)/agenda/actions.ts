@@ -13,7 +13,11 @@ import {
 } from "@/db/schema";
 import { buildCancelToken } from "@/lib/cancel-token";
 import { normalizarTelefonoAR } from "@/lib/phone";
-import { getAvailableSlots, rangesOverlap } from "@/lib/availability";
+import {
+  getAvailableSlots,
+  rangesOverlap,
+  barberoBloqueadoRecurrente,
+} from "@/lib/availability";
 import { getSession } from "@/lib/session";
 import { ymdLocal } from "@/lib/format";
 import { sendConfirmacionEmails } from "@/server/email/send-confirmacion";
@@ -299,6 +303,24 @@ export async function createTurnoAdminAction(
   }
 
   const fin = new Date(inicio.getTime() + s.duracionMin * 60_000);
+
+  // 3.b Bloqueo recurrente: sólo bloquea turnos futuros. El admin puede cargar
+  // walk-ins retroactivos (el barbero efectivamente atendió pese al bloqueo
+  // recurrente), pero no debería poder agendar a futuro un horario que marcó
+  // como "no atiendo". Si lo necesita, primero borra el bloqueo recurrente.
+  if (
+    inicio.getTime() > Date.now() &&
+    (await barberoBloqueadoRecurrente(barberoId, inicio, fin))
+  ) {
+    return {
+      ok: false,
+      error: {
+        code: "barbero_bloqueado",
+        message:
+          "El barbero tiene un bloqueo recurrente en ese horario. Sacalo en Configuración si querés agendar igual.",
+      },
+    };
+  }
 
   // 4. Precio del barbero para ese servicio (snapshot)
   const [precioRow] = await db
