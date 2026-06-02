@@ -18,6 +18,7 @@ import {
   checkRateLimitForRoute,
 } from "@/lib/rate-limit";
 import { sendConfirmacionEmails } from "@/server/email/send-confirmacion";
+import { sendCancelacionNotifs } from "@/server/email/send-cancelacion";
 
 /**
  * Resultado tipado, mismo shape que el resto del proyecto.
@@ -411,6 +412,11 @@ export async function cancelTurno(
     .update(turnos)
     .set({ estado: "cancelado_cliente", updatedAt: new Date() })
     .where(eq(turnos.id, row.id));
+
+  // Aviso a cliente y barbero. Fire-and-forget: ya cancelamos en BD, una falla
+  // de notif no debe romper el flujo del cliente. `sendCancelacionNotifs` captura
+  // todo y manda al barbero por WhatsApp Y email en paralelo (estrategia "both").
+  void sendCancelacionNotifs(row.id);
 
   return { ok: true, data: { turnoId: row.id } };
 }
