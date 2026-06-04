@@ -3,7 +3,7 @@
  *
  * Idempotente: corre N veces y no duplica.
  * - 2 barberos (Hugo L. — Leone / Leonel B. — Bagnasco)
- * - 3 servicios (Corte 30, Corte y barba 45, Barba 15)
+ * - 2 servicios (Corte 30, Corte y barba 45)
  * - Precios iguales para los dos barberos (modelo permite diferenciar luego)
  * - Horarios martes a sábado: 10-13 y 15-20
  * - Días de descanso recurrentes: domingo (0) y lunes (1)
@@ -52,7 +52,6 @@ const BARBEROS: SeedBarbero[] = [
 const SERVICIOS: SeedServicio[] = [
   { nombre: "Corte", duracionMin: 30, precio: "16000.00", orden: 1 },
   { nombre: "Corte y barba", duracionMin: 45, precio: "18000.00", orden: 2 },
-  { nombre: "Barba", duracionMin: 15, precio: "7000.00", orden: 3 },
 ];
 
 // Horarios de operación: martes (2) a sábado (6), dos rangos.

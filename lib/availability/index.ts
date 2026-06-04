@@ -16,9 +16,11 @@ import { env } from "@/lib/env";
 
 /**
  * Granularidad de los slots ofrecidos al usuario, en minutos.
- * 15min es el estándar de la industria y permite elegir 10:00, 10:15, 10:30...
+ * 30min: los barberos solo quieren turnos en punto y media (10:00, 10:30, 11:00...),
+ * nada de :15 ni :45. Como las aperturas (10:00, 15:00) caen en :00, el paso de 30
+ * garantiza que todo inicio de slot sea :00 o :30.
  */
-export const SLOT_STEP_MIN = 15;
+export const SLOT_STEP_MIN = 30;
 
 /**
  * Tiempo mínimo de antelación entre "ahora" y el inicio del slot ofrecido.
