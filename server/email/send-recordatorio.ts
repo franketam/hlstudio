@@ -32,7 +32,9 @@ export type Db = PostgresJsDatabase<typeof schema>;
 
 /**
  * Tipo de notificación que se persiste en `notificaciones_enviadas.tipo`.
- * Convención: `recordatorio_24h`, `recordatorio_2h`.
+ * Convención: `recordatorio_24h`, `recordatorio_3h`.
+ * (El recordatorio corto era `recordatorio_2h` hasta jul-2026; la migración
+ * 0005 renombró las filas existentes.)
  *
  * IMPORTANTE: el unique compuesto es (turno_id, tipo, canal). Para detectar
  * si un turno YA recibió el recordatorio (sin importar el canal), filtramos
@@ -40,7 +42,7 @@ export type Db = PostgresJsDatabase<typeof schema>;
  */
 const TIPO_NOTIF: Record<RecordatorioTipo, string> = {
   "24h": "recordatorio_24h",
-  "2h": "recordatorio_2h",
+  "3h": "recordatorio_3h",
 };
 
 export type CandidatoRecordatorio = {
@@ -58,7 +60,7 @@ export type CandidatoRecordatorio = {
 
 /**
  * Busca turnos confirmados cuyo `inicio_ts` cae dentro de la ventana del
- * recordatorio (24h: now+23h..now+25h; 2h: now+1h..now+3h) y que todavía
+ * recordatorio (24h: now+22h..now+24h; 3h: now+1h..now+3h) y que todavía
  * NO tienen los 2 canales aplicables enviados para ese tipo.
  *
  * Estrategia "both" para cliente: el turno puede tener hasta 2 filas en
@@ -131,9 +133,15 @@ export async function findCandidatos(
 }
 
 /**
- * Ventana de búsqueda para cada tipo. Asume que el cron corre cada ~10 min;
- * la ventana es 2h en cada lado del punto objetivo para tolerar reinicios
- * y desfases de scheduler sin perder envíos.
+ * Ventana de búsqueda para cada tipo.
+ *
+ * OJO con la semántica: el turno ENTRA a la ventana por el borde superior
+ * (`hasta`), y el barrido lo agarra en el primer tick donde califica. O sea
+ * que `hasta` ES el punto objetivo: con cron cada ~10 min, el envío sale a
+ * ~T-24h / ~T-3h (menos hasta 10 min de granularidad del cron).
+ * El margen inferior (`desde`) NO es el objetivo — es tolerancia a caídas:
+ * si el cron estuvo parado, el turno sigue siendo candidato hasta que falte
+ * menos que `desde`.
  */
 export function ventana(
   tipo: RecordatorioTipo,
@@ -141,8 +149,8 @@ export function ventana(
 ): { desde: Date; hasta: Date } {
   if (tipo === "24h") {
     return {
-      desde: new Date(now.getTime() + 23 * 3_600_000),
-      hasta: new Date(now.getTime() + 25 * 3_600_000),
+      desde: new Date(now.getTime() + 22 * 3_600_000),
+      hasta: new Date(now.getTime() + 24 * 3_600_000),
     };
   }
   return {
@@ -247,7 +255,7 @@ export async function procesarCandidato(
     db,
     {
       turnoId: cand.turnoId,
-      tipo: tipoStr as "recordatorio_24h" | "recordatorio_2h",
+      tipo: tipoStr as "recordatorio_24h" | "recordatorio_3h",
       destinatarioTelefono: telefonoWa,
       destinatarioEmail: cand.clienteEmail,
       waText,

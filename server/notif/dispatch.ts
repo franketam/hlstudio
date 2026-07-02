@@ -33,7 +33,7 @@ export type DispatchTipo =
   | "confirmacion_cliente"
   | "confirmacion_barbero"
   | "recordatorio_24h"
-  | "recordatorio_2h"
+  | "recordatorio_3h"
   | "cancelacion_cliente"
   | "cancelacion_barbero";
 

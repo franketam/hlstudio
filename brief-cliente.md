@@ -128,7 +128,7 @@ Todo lo siguiente se edita desde el panel admin:
 ### 5.5 Notificaciones por email
 - **T0**: Email de confirmación al reservar (inmediato), incluye link único de gestión.
 - **T-24h**: Recordatorio 24 horas antes del turno.
-- **T-2h**: Recordatorio 2 horas antes del turno.
+- **T-3h**: Recordatorio 3 horas antes del turno (era T-2h; se movió a 3h en jul-2026, coincide con el corte de cancelación online).
 - Proveedor sugerido: **Resend** (free tier 3.000/mes alcanza para arrancar).
 - WhatsApp queda **fuera de MVP** (ver §12).
 
@@ -142,7 +142,7 @@ Todo lo siguiente se edita desde el panel admin:
 | RF-02 | Selección de barbero antes que servicio | MUST |
 | RF-03 | Slots disponibles calculados según agenda del barbero, duración del servicio y bloqueos | MUST |
 | RF-04 | Email de confirmación con link único firmado | MUST |
-| RF-05 | Recordatorios T-24h y T-2h | MUST |
+| RF-05 | Recordatorios T-24h y T-3h | MUST |
 | RF-06 | Cancelación autoservicio hasta T-3h | MUST |
 | RF-07 | Reconocimiento de cliente recurrente por teléfono | MUST |
 | RF-08 | Panel admin con agenda día/semana | MUST |
@@ -175,7 +175,7 @@ Todo lo siguiente se edita desde el panel admin:
 |--------|-----------|--------------------|----|
 | Confirmación de turno | Email | + WhatsApp | Resend |
 | Recordatorio T-24h | Email | + WhatsApp | Resend |
-| Recordatorio T-2h | Email | + WhatsApp | Resend |
+| Recordatorio T-3h | Email | + WhatsApp | Resend |
 | Cancelación confirmada | Email | + WhatsApp | Resend |
 
 > **Aviso al cliente final del proyecto**: sin WhatsApp, el efecto sobre no-show es parcial (~10–18% vs ~5–10% con WhatsApp). Si el ausentismo no baja lo esperado, la palanca v2 es **WhatsApp + seña**.
@@ -326,7 +326,7 @@ UsuarioAdmin                   // gestionado por Supabase Auth
 - Estética blanco/negro élite aplicada.
 
 ### Sprint 2 — Producción (estimado 5–7 días)
-- Recordatorios T-24h y T-2h (RF-05) con job programado (Vercel Cron / Supabase Edge / Resend Schedules).
+- Recordatorios T-24h y T-3h (RF-05) con job programado (Vercel Cron / Supabase Edge / Resend Schedules).
 - Ficha de cliente con historial y búsqueda (RF-09).
 - Bloqueo puntual de agenda (RF-11).
 - Crear turno manual desde el panel (RF-12).
@@ -350,7 +350,7 @@ UsuarioAdmin                   // gestionado por Supabase Auth
 El MVP se considera entregado cuando:
 - [ ] Un cliente puede reservar desde el celular en <60s y recibir email de confirmación.
 - [ ] El cliente puede cancelar desde el link hasta 3hs antes.
-- [ ] Recordatorios T-24h y T-2h se envían automáticamente.
+- [ ] Recordatorios T-24h y T-3h se envían automáticamente.
 - [ ] El dueño puede entrar al panel desde el celular y ver la agenda del día y de la semana.
 - [ ] El dueño puede buscar un cliente por nombre o teléfono y ver su historial.
 - [ ] El dueño puede editar barberos, servicios, precios por barbero, horarios y descansos sin tocar código.

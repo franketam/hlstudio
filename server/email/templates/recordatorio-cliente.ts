@@ -1,7 +1,7 @@
 import { fechaLargaAR, formatPrecioARS, horaCortaAR } from "@/lib/format";
 import type { RenderedEmail } from "./confirmacion-cliente";
 
-export type RecordatorioTipo = "24h" | "2h";
+export type RecordatorioTipo = "24h" | "3h";
 
 export type RecordatorioClienteData = {
   tipo: RecordatorioTipo;
@@ -33,27 +33,27 @@ const COPY_BY_TIPO: Record<
     leadText: (cliente, barbero) =>
       `Hola ${cliente},\n\nTe recordamos que mañana tenés tu turno con ${barbero} en HLstudio.`,
   },
-  "2h": {
+  "3h": {
     eyebrow: "Recordatorio",
-    h1: "Tu turno es en 2 horas.",
-    subjectPrefix: "Tu turno es en 2 horas",
+    h1: "Tu turno es en 3 horas.",
+    subjectPrefix: "Tu turno es en 3 horas",
     leadHtml: (cliente, barbero) =>
-      `Hola ${cliente}, en aproximadamente 2 horas te esperamos con ${barbero}.`,
+      `Hola ${cliente}, en aproximadamente 3 horas te esperamos con ${barbero}.`,
     leadText: (cliente, barbero) =>
-      `Hola ${cliente},\n\nEn aproximadamente 2 horas te esperamos en HLstudio con ${barbero}.`,
+      `Hola ${cliente},\n\nEn aproximadamente 3 horas te esperamos en HLstudio con ${barbero}.`,
   },
 };
 
 /**
- * Template del recordatorio T-24h / T-2h. Comparte la estética del email de
+ * Template del recordatorio T-24h / T-3h. Comparte la estética del email de
  * confirmación: ancho 600, paleta blanco/negro, sin imágenes externas.
  *
  * Diferencias vs confirmación:
  *  - Eyebrow "Recordatorio" en vez de "HLstudio".
- *  - H1 contextual ("Te esperamos mañana." o "Tu turno es en 2 horas.").
+ *  - H1 contextual ("Te esperamos mañana." o "Tu turno es en 3 horas.").
  *  - Bloque de cancelación condicional: a T-24h se ofrece (queda >3h),
- *    a T-2h se omite porque el cliente ya pasó la ventana de cancelación
- *    autoservicio (corte a T-3h).
+ *    a T-3h se omite porque al recibirlo el corte de cancelación
+ *    autoservicio (T-3h) ya pasó o está justo en el borde.
  */
 export function renderRecordatorioCliente(
   data: RecordatorioClienteData

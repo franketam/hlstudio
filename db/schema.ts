@@ -312,7 +312,7 @@ export const turnos = pgTable(
 );
 
 /**
- * Log de notificaciones enviadas (idempotencia para los recordatorios T-24h / T-2h).
+ * Log de notificaciones enviadas (idempotencia para los recordatorios T-24h / T-3h).
  * Evita doble envío si el cron se reejecuta.
  */
 export const notificacionesEnviadas = pgTable(
@@ -322,7 +322,7 @@ export const notificacionesEnviadas = pgTable(
     turnoId: uuid("turno_id")
       .notNull()
       .references(() => turnos.id, { onDelete: "cascade" }),
-    tipo: text("tipo").notNull(), // 'confirmacion_cliente' | 'confirmacion_barbero' | 'recordatorio_24h' | 'recordatorio_2h' | 'cancelacion'
+    tipo: text("tipo").notNull(), // 'confirmacion_cliente' | 'confirmacion_barbero' | 'recordatorio_24h' | 'recordatorio_3h' | 'cancelacion'
     // Canal por el que se mandó. 'email' = Resend, 'whatsapp' = bot Baileys interno.
     // Default 'email' para backward-compat con filas previas y casos donde no
     // se especifique explícitamente.

@@ -1,10 +1,10 @@
 /**
- * Barrido de recordatorios T-24h y T-2h.
+ * Barrido de recordatorios T-24h y T-3h.
  *
  * Uso:
- *   node scripts/recordatorios.mjs                     # corre 24h y 2h
+ *   node scripts/recordatorios.mjs                     # corre 24h y 3h
  *   node scripts/recordatorios.mjs --tipo=24h          # solo 24h
- *   node scripts/recordatorios.mjs --tipo=2h           # solo 2h
+ *   node scripts/recordatorios.mjs --tipo=3h           # solo 3h (acepta --tipo=2h como alias legado)
  *   node scripts/recordatorios.mjs --dry-run           # detecta candidatos pero NO envía ni marca
  *
  * En local también funciona con `tsx`:
@@ -57,8 +57,12 @@ function parseArgs(argv: string[]): Args {
       out.dryRun = true;
     } else if (a.startsWith("--tipo=")) {
       const v = a.slice("--tipo=".length);
-      if (v === "24h" || v === "2h") {
+      if (v === "24h" || v === "3h") {
         out.tipo = v;
+      } else if (v === "2h") {
+        // Alias legado: el recordatorio corto pasó de T-2h a T-3h (jul-2026).
+        // Se acepta para no romper crons ya configurados con --tipo=2h.
+        out.tipo = "3h";
       } else {
         log("error", "argumento invalido", { arg: a });
         process.exit(2);
@@ -224,7 +228,7 @@ async function main(): Promise<number> {
 
   let exitCode = 0;
   const tipos: RecordatorioTipo[] =
-    args.tipo === "all" ? ["24h", "2h"] : [args.tipo];
+    args.tipo === "all" ? ["24h", "3h"] : [args.tipo];
 
   log("info", "inicio barrido", {
     tipos,

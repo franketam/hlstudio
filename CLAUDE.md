@@ -165,21 +165,25 @@ Servicio aparte en `services/whatsapp-bot/` — Express + Baileys. La app princi
 
 **Smoke pendiente al pairing inicial en prod**: el envío real WA solo se puede validar contra una cuenta WhatsApp real pareada. En dev se chequea typecheck + build + arranque del bot (sin pareo no envía).
 
-## Recordatorios T-24h / T-2h (cron en Coolify)
+## Recordatorios T-24h / T-3h (cron en Coolify)
 
 Script CLI: `scripts/recordatorios.ts` → bundleado a `scripts/recordatorios.mjs` por el Dockerfile (junto a migrate/seed).
 
+> El recordatorio corto era T-2h hasta jul-2026; se movió a T-3h (pedido del cliente).
+> La migración `0005` renombró las filas `recordatorio_2h` → `recordatorio_3h`, y
+> `--tipo=2h` se acepta como alias legado de `--tipo=3h`.
+
 **Cómo lo invoca el cron:**
 ```sh
-node scripts/recordatorios.mjs              # corre 24h y 2h
+node scripts/recordatorios.mjs              # corre 24h y 3h
 node scripts/recordatorios.mjs --tipo=24h   # solo 24h
-node scripts/recordatorios.mjs --tipo=2h    # solo 2h
+node scripts/recordatorios.mjs --tipo=3h    # solo 3h
 node scripts/recordatorios.mjs --dry-run    # detecta candidatos pero no envía
 ```
 
 **Idempotencia**: cada par `(turno_id, tipo)` tiene unique constraint en `notificaciones_enviadas`. El claim atómico (`INSERT ... ON CONFLICT DO NOTHING`) garantiza que dos runs en paralelo no envían dos veces.
 
-**Ventana de barrido**: 24h busca turnos confirmados entre `now+23h` y `now+25h`; 2h entre `now+1h` y `now+3h`. Asumimos cron cada ~10 min — la ventana absorbe atrasos del scheduler.
+**Ventana de barrido**: 24h busca turnos confirmados entre `now+22h` y `now+24h`; 3h entre `now+1h` y `now+3h`. El turno entra a la ventana por el borde superior, así que el envío sale a ~T-24h / ~T-3h en el primer tick del cron que lo agarra; el margen inferior es tolerancia a caídas del scheduler. **El cron DEBE correr cada ~10 min** — si corre menos seguido, el recordatorio llega tarde (p. ej. cron horario → llega entre 2h y 3h antes en vez de 3h).
 
 **Configurar el cron en Coolify**: dos opciones, la más simple es Scheduled Tasks (Coolify ≥ v4).
 - Dashboard → la app HLstudio → Scheduled Tasks → Add.

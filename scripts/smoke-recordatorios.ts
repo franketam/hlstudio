@@ -1,8 +1,9 @@
 /**
  * Smoke test del flow de recordatorios.
  *
- * Crea un turno con inicio_ts ~24h en el futuro y otro ~2h, corre el barrido
- * en --dry-run, valida que ambos sean detectados, y limpia.
+ * Crea un turno con inicio_ts ~24h en el futuro y otro ~2h30 (dentro de la
+ * ventana del T-3h), corre el barrido en --dry-run, valida que ambos sean
+ * detectados, y limpia.
  *
  * Uso: `npx tsx scripts/smoke-recordatorios.ts`
  */
@@ -101,8 +102,9 @@ async function main() {
   const fin24h = new Date(
     inicio24h.getTime() + servicio.duracionMin * 60_000
   );
-  const inicio2h = new Date(now.getTime() + 2 * 3_600_000); // exact T-2h
-  const fin2h = new Date(inicio2h.getTime() + servicio.duracionMin * 60_000);
+  // Dentro de la ventana del T-3h (now+1h..now+3h), lejos de los bordes.
+  const inicio3h = new Date(now.getTime() + 2.5 * 3_600_000);
+  const fin3h = new Date(inicio3h.getTime() + servicio.duracionMin * 60_000);
 
   await db.insert(schema.turnos).values([
     {
@@ -119,11 +121,11 @@ async function main() {
       clienteId: cliente.id,
       barberoId: barbero.id,
       servicioId: servicio.id,
-      inicioTs: inicio2h,
-      finTs: fin2h,
+      inicioTs: inicio3h,
+      finTs: fin3h,
       estado: "confirmado",
       precioTotal: precio.precio,
-      cancelToken: `smoke-2h-${Date.now()}`,
+      cancelToken: `smoke-3h-${Date.now()}`,
     },
   ]);
 
@@ -142,15 +144,15 @@ async function main() {
     console.log(`  OK: turnoId=${t24h.turnoId} inicio=${t24h.inicio.toISOString()}`);
   }
 
-  // 2) Búsqueda T-2h
-  const cand2h = await findCandidatos(db, "2h", now);
-  console.log(`\n[smoke] candidatos T-2h: ${cand2h.length}`);
-  const t2h = cand2h.find((c) => c.clienteEmail === emailCliente);
-  if (!t2h) {
-    console.error("FAIL: no se detectó el turno T-2h");
+  // 2) Búsqueda T-3h
+  const cand3h = await findCandidatos(db, "3h", now);
+  console.log(`\n[smoke] candidatos T-3h: ${cand3h.length}`);
+  const t3h = cand3h.find((c) => c.clienteEmail === emailCliente);
+  if (!t3h) {
+    console.error("FAIL: no se detectó el turno T-3h");
     process.exitCode = 1;
   } else {
-    console.log(`  OK: turnoId=${t2h.turnoId} inicio=${t2h.inicio.toISOString()}`);
+    console.log(`  OK: turnoId=${t3h.turnoId} inicio=${t3h.inicio.toISOString()}`);
   }
 
   // 3) Dry-run procesarCandidato: NO debe crear lock ni mandar nada
@@ -192,8 +194,8 @@ async function main() {
     );
   const candPostPasado = await findCandidatos(db, "24h", now);
   const sigueAhi = candPostPasado.find((c) => c.clienteEmail === emailCliente);
-  // El otro turno (T-2h) sigue, pero el ex T-24h ya está en el pasado y no debe
-  // aparecer (la ventana es +23h..+25h).
+  // El otro turno (T-3h) sigue, pero el ex T-24h ya está en el pasado y no debe
+  // aparecer (la ventana es +22h..+24h).
   if (sigueAhi && sigueAhi.turnoId === t24h?.turnoId) {
     console.error(
       "FAIL: turno con inicio_ts en el pasado seguía siendo candidato T-24h"

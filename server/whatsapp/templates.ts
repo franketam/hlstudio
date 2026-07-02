@@ -86,11 +86,11 @@ export function renderConfirmacionBarberoWa(
 }
 
 // -------------------------------------------------------------------------
-// 3. Recordatorio T-24h al cliente
+// 3. Recordatorio T-24h / T-3h al cliente
 // -------------------------------------------------------------------------
 
 export type RecordatorioClienteWaData = {
-  tipo: "24h" | "2h";
+  tipo: "24h" | "3h";
   clienteNombre: string;
   barberoNombre: string;
   servicioNombre: string;
@@ -120,16 +120,16 @@ export function renderRecordatorioClienteWa(
     ].join("\n");
   }
 
-  // 2h: sin link de cancelación (ya pasó la ventana)
+  // 3h: sin link de cancelación (el corte online es justo T-3h)
   return [
-    `Hola ${data.clienteNombre}, tu turno con ${data.barberoNombre} es en *2 horas* aproximadamente.`,
+    `Hola ${data.clienteNombre}, tu turno con ${data.barberoNombre} es en *3 horas* aproximadamente.`,
     ``,
     `📅 ${fecha} · ${hora} hs`,
     `✂️ ${data.servicioNombre} (${data.duracionMin} min)`,
     ``,
     `📍 ${HL_DIRECCION_PLACEHOLDER}`,
     ``,
-    `Si no podés venir, comunicate con el barbero — ya pasó la ventana de cancelación online.`,
+    `Si no podés venir, comunicate con el barbero — la cancelación online cierra 3 horas antes del turno.`,
   ].join("\n");
 }
 
