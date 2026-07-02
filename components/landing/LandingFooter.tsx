@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { Logo } from "@/components/brand/Logo";
 import { APP_NAME } from "@/lib/constants";
 
@@ -25,6 +26,22 @@ export function LandingFooter() {
           >
             Acceso staff
           </Link>
+          <a
+            href="https://www.venturebyte.com.ar"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Desarrollado por VentureByte"
+            className="mt-4 inline-flex items-center justify-center gap-2 text-xs text-background/45 transition-colors hover:text-background/70"
+          >
+            Desarrollado por VentureByte
+            <Image
+              src="/venturebyte-white.png"
+              alt="VentureByte"
+              width={20}
+              height={20}
+              className="h-5 w-auto opacity-70 transition-opacity hover:opacity-100"
+            />
+          </a>
         </div>
       </div>
     </footer>
