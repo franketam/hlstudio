@@ -1,14 +1,19 @@
 /**
- * Barrido de recordatorios T-24h y T-3h.
+ * Barrido de recordatorios. Hoy solo corre T-3h.
+ *
+ * El recordatorio del día antes (T-24h) fue DESACTIVADO a pedido del cliente
+ * (jul-2026): el bot ya no avisa el día anterior, únicamente ~3h antes del turno.
+ * La maquinaria del T-24h (template, ventana, tipo) queda en el código por si se
+ * quiere reactivar; para hacerlo, volver a incluir "24h" en `tipos` en `main()`.
  *
  * Uso:
- *   node scripts/recordatorios.mjs                     # corre 24h y 3h
- *   node scripts/recordatorios.mjs --tipo=24h          # solo 24h
+ *   node scripts/recordatorios.mjs                     # corre solo T-3h
  *   node scripts/recordatorios.mjs --tipo=3h           # solo 3h (acepta --tipo=2h como alias legado)
+ *   node scripts/recordatorios.mjs --tipo=24h          # NO-OP: T-24h desactivado, no envía nada
  *   node scripts/recordatorios.mjs --dry-run           # detecta candidatos pero NO envía ni marca
  *
  * En local también funciona con `tsx`:
- *   npx tsx scripts/recordatorios.ts --tipo=24h --dry-run
+ *   npx tsx scripts/recordatorios.ts --tipo=3h --dry-run
  *
  * Output: JSON-line logs a stdout. Coolify los captura y quedan en su panel.
  *
@@ -57,12 +62,18 @@ function parseArgs(argv: string[]): Args {
       out.dryRun = true;
     } else if (a.startsWith("--tipo=")) {
       const v = a.slice("--tipo=".length);
-      if (v === "24h" || v === "3h") {
+      if (v === "3h") {
         out.tipo = v;
       } else if (v === "2h") {
         // Alias legado: el recordatorio corto pasó de T-2h a T-3h (jul-2026).
         // Se acepta para no romper crons ya configurados con --tipo=2h.
         out.tipo = "3h";
+      } else if (v === "24h") {
+        // El recordatorio del día antes (T-24h) fue desactivado a pedido del
+        // cliente (jul-2026). Si un cron viejo sigue invocando --tipo=24h,
+        // no hace nada y sale limpio (sin enviar) en vez de romper.
+        log("warn", "recordatorio T-24h desactivado (pedido cliente): no se envia nada", { arg: a });
+        process.exit(0);
       } else {
         log("error", "argumento invalido", { arg: a });
         process.exit(2);
@@ -227,8 +238,10 @@ async function main(): Promise<number> {
   const db = drizzle(sql, { schema });
 
   let exitCode = 0;
+  // T-24h desactivado (pedido cliente jul-2026): el barrido por default solo
+  // corre T-3h. Para reactivar el recordatorio del día antes, agregar "24h" acá.
   const tipos: RecordatorioTipo[] =
-    args.tipo === "all" ? ["24h", "3h"] : [args.tipo];
+    args.tipo === "all" ? ["3h"] : [args.tipo];
 
   log("info", "inicio barrido", {
     tipos,
