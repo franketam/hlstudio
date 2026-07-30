@@ -40,6 +40,30 @@ const logger = pino({ level: process.env.LOG_LEVEL ?? "info" });
 // tenemos cacheado, el destinatario queda en "Waiting for this message".
 const SENT_CACHE_MAX = 1_000;
 
+// --- Watchdog ---------------------------------------------------------------
+// Toda la lógica de reintento cuelga del evento `connection: "close"`. Si el
+// WebSocket se cuelga SIN cerrar, ese evento nunca llega y el bot queda zombie:
+// proceso vivo, /health en 200, el orquestador nunca lo reinicia. Pasó el
+// 28-jul-2026 (WhatsApp cortó con 503, el relogin dio 405 y el intento
+// siguiente quedó colgado 38h sin emitir una sola línea de log).
+//
+// El supervisor es un timer independiente de los eventos de baileys: si no hay
+// progreso en la ventana, recicla el socket a mano.
+const SUPERVISOR_TICK_MS = 30_000;
+
+// Sin llegar a `ready` —ni refrescar el QR, ni reintentar— en esta ventana,
+// damos el socket por colgado.
+const NO_PROGRESS_TIMEOUT_MS = 90_000;
+
+// El fetch de versión de WA es un `await` en el camino crítico del arranque y
+// por defecto no tiene corte. Sin esto, un fetch colgado congela el arranque.
+const VERSION_FETCH_TIMEOUT_MS = 10_000;
+
+// Tras este tiempo sin estar operativo, /health pasa a 503 para que el
+// orquestador reinicie el contenedor. Es la última red: el watchdog interno
+// tiene que haber resuelto mucho antes.
+const UNHEALTHY_AFTER_MS = 15 * 60_000;
+
 // Nombres de proto.WebMessageInfo.Status, para loguear la progresión de
 // entrega de forma legible. Si nunca llega a DELIVERY_ACK, el destinatario
 // no lo recibió (queda en "Waiting for this message").
@@ -76,14 +100,32 @@ export class WhatsAppBot {
   // messageId -> contenido proto, para responder pedidos de reintento.
   private readonly sentMessages = new Map<string, proto.IMessage>();
 
+  // --- Watchdog ---
+  private supervisorTimer: NodeJS.Timeout | null = null;
+  // Última señal de vida de la conexión: arranque, QR, open o close. NO se
+  // actualiza sola con el paso del tiempo — si se congela, el supervisor actúa.
+  private lastProgressAt = Date.now();
+  private readonly bootedAt = Date.now();
+  private lastReadyAt: number | null = null;
+  // Invalida los handlers de sockets viejos. Un socket reciclado puede seguir
+  // emitiendo eventos; sin esto pisaría el estado del socket nuevo.
+  private generation = 0;
+  private recycling = false;
+
   constructor(private readonly authDir: string) {}
 
+  private markProgress(): void {
+    this.lastProgressAt = Date.now();
+  }
+
   async start(): Promise<void> {
+    this.startSupervisor();
     if (this.starting) {
       logger.warn("start() llamado mientras ya estaba arrancando — ignoro");
       return;
     }
     this.starting = true;
+    this.markProgress();
     try {
       await this._startInternal();
     } finally {
@@ -97,6 +139,10 @@ export class WhatsAppBot {
       this.reconnectTimer = null;
     }
 
+    // Todo handler de este socket queda atado a esta generación: si el
+    // watchdog lo recicla, sus eventos tardíos se descartan.
+    const gen = ++this.generation;
+
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
 
     // La versión de WhatsApp Web cambia seguido; si Baileys usa la hardcoded
@@ -104,7 +150,9 @@ export class WhatsAppBot {
     // consulta el endpoint oficial en runtime.
     let waVersion: [number, number, number] | undefined;
     try {
-      const { version, isLatest } = await fetchLatestBaileysVersion();
+      const { version, isLatest } = await fetchLatestBaileysVersion({
+        timeout: VERSION_FETCH_TIMEOUT_MS,
+      });
       waVersion = version;
       logger.info({ version, isLatest }, "wa version resuelta");
     } catch (err) {
@@ -136,10 +184,20 @@ export class WhatsAppBot {
     });
 
     this.sock = sock;
+    this.markProgress();
 
-    sock.ev.on("creds.update", saveCreds);
+    sock.ev.on("creds.update", async () => {
+      // Un socket reciclado escribiendo creds pisaría las del socket vigente.
+      if (gen !== this.generation) return;
+      await saveCreds();
+    });
 
     sock.ev.on("connection.update", async (update: Partial<ConnectionState>) => {
+      if (gen !== this.generation) return;
+      // Cualquier evento de conexión cuenta como señal de vida, incluso un
+      // error: significa que el socket sigue respondiendo.
+      this.markProgress();
+
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
@@ -157,6 +215,7 @@ export class WhatsAppBot {
         this.state = "ready";
         this.qrDataUrl = null;
         this.lastError = null;
+        this.lastReadyAt = Date.now();
         const me = sock.user?.id;
         this.pairedNumber = me ? me.split(":")[0] ?? null : null;
         logger.info({ user: this.pairedNumber }, "WhatsApp pareado y listo");
@@ -255,6 +314,7 @@ export class WhatsAppBot {
     if (this.reconnectTimer) return;
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = null;
+      this.markProgress();
       logger.info("reintentando conexion...");
       try {
         await this.start();
@@ -267,12 +327,114 @@ export class WhatsAppBot {
     }, delayMs);
   }
 
+  /**
+   * Timer independiente de los eventos de baileys. Es lo único que puede
+   * rescatar al bot cuando el socket se cuelga sin emitir `close` — el modo de
+   * falla que lo dejó 38h mudo el 28-jul-2026.
+   */
+  private startSupervisor(): void {
+    if (this.supervisorTimer) return;
+    this.supervisorTimer = setInterval(() => {
+      void this.supervisorTick();
+    }, SUPERVISOR_TICK_MS);
+    // No debe mantener vivo el proceso por sí solo.
+    this.supervisorTimer.unref?.();
+    logger.info(
+      { tickMs: SUPERVISOR_TICK_MS, timeoutMs: NO_PROGRESS_TIMEOUT_MS },
+      "[wa] watchdog activo"
+    );
+  }
+
+  private async supervisorTick(): Promise<void> {
+    // Un reciclo puede tardar más que el tick; sin esto se pisarían.
+    if (this.recycling) return;
+    if (this.state === "ready") return;
+
+    // `qr` refresca cada ~20s mientras el QR está vigente, así que sigue
+    // marcando progreso: esperar a que un humano escanee no dispara el reciclo.
+    const idleMs = Date.now() - this.lastProgressAt;
+    if (idleMs < NO_PROGRESS_TIMEOUT_MS) return;
+
+    logger.error(
+      { state: this.state, idleMs, starting: this.starting },
+      "[wa] watchdog: sin progreso, reciclando socket"
+    );
+    await this.forceRecycle();
+  }
+
+  /**
+   * Descarta el socket actual y arranca uno nuevo, sin depender de que baileys
+   * emita nada. Best-effort en cada paso: el socket puede estar en cualquier
+   * estado, incluido a medio abrir.
+   */
+  private async forceRecycle(): Promise<void> {
+    this.recycling = true;
+    try {
+      await this._forceRecycle();
+    } finally {
+      this.recycling = false;
+    }
+  }
+
+  private async _forceRecycle(): Promise<void> {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    // Invalida los handlers del socket viejo antes de tocarlo.
+    this.generation++;
+    const dead = this.sock;
+    this.sock = null;
+
+    try {
+      dead?.end(new Error("watchdog: socket sin progreso"));
+    } catch (err) {
+      logger.warn({ err }, "[wa] watchdog: fallo al cerrar el socket viejo");
+    }
+    try {
+      dead?.ws?.close();
+    } catch {
+      // ya estaba cerrado o nunca llegó a abrir
+    }
+
+    // Si `_startInternal` nunca resolvió, `starting` quedó trabado en true y
+    // todo `start()` posterior sería un no-op. Lo destrabamos a mano.
+    this.starting = false;
+    this.markProgress();
+
+    try {
+      await this.start();
+    } catch (err) {
+      logger.error({ err }, "[wa] watchdog: fallo el restart, reintento en 10s");
+      this.state = "error";
+      this.lastError = err instanceof Error ? err.message : String(err);
+      this.scheduleReconnect(10_000);
+    }
+  }
+
   getStatus(): BotPublicStatus {
     return {
       state: this.state,
       pairedNumber: this.pairedNumber,
       lastError: this.lastError,
     };
+  }
+
+  /**
+   * Salud para el healthcheck del orquestador. Reporta 200 mientras el bot
+   * pueda recuperarse solo; recién marca unhealthy cuando lleva
+   * `UNHEALTHY_AFTER_MS` sin operar, para que Coolify reinicie el contenedor.
+   *
+   * `qr` nunca es unhealthy: ahí esperamos a que un humano escanee, puede
+   * tardar horas y reiniciar borraría el QR vigente.
+   */
+  getHealth(): { ok: boolean; state: BotState; downMs: number } {
+    const downMs =
+      this.state === "ready" ? 0 : Date.now() - (this.lastReadyAt ?? this.bootedAt);
+    const ok =
+      this.state === "ready" || this.state === "qr" || downMs < UNHEALTHY_AFTER_MS;
+    return { ok, state: this.state, downMs };
   }
 
   getQrDataUrl(): string | null {

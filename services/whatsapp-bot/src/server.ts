@@ -37,9 +37,14 @@ function authGuard(req: Request, res: Response, next: NextFunction): void {
 
 // --- Routes ---
 
-// Health: NO requiere auth (para Coolify healthcheck)
+// Health: NO requiere auth (para Coolify healthcheck).
+//
+// Antes devolvía 200 incondicionalmente: mientras Express respondiera, el bot
+// figuraba sano aunque el socket de WhatsApp estuviera muerto. Así pasó
+// desapercibido el freeze del 28-jul-2026. Ahora refleja el estado real.
 app.get("/health", (_req, res) => {
-  res.json({ ok: true });
+  const health = bot.getHealth();
+  res.status(health.ok ? 200 : 503).json(health);
 });
 
 app.get("/status", authGuard, (_req, res) => {
