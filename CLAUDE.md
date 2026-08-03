@@ -147,6 +147,43 @@ Servicio aparte en `services/whatsapp-bot/` — Express + Baileys. La app princi
 
 **Auto-clean en logout**: si WhatsApp expulsa la sesión remotamente (DisconnectReason.loggedOut), el bot borra el `AUTH_DIR` y muestra QR nuevo. El admin re-parea desde `/admin/whatsapp`.
 
+### Incidente 3-ago-2026: "llegan mensajes del sábado ahora"
+
+Síntoma: clientes recibiendo mensajes de días atrás, en loop. Causa: si no se le
+pasa `msgRetryCounterCache`, Baileys se arma uno **por socket** con TTL de 1h.
+Como el socket reciclaba cada ~50 min, el contador nunca llegaba a
+`maxMsgRetryCount`; se reseteaba a 0 y en `retryCount === 1` Baileys llama a
+`requestPlaceholderResend`, que le pide al teléfono **que reenvíe el mensaje**.
+12 mensajes del sábado que el bot no pudo descifrar se re-pidieron cada 50 min
+durante 3 días (635 retry receipts, 94,6% de la propia cuenta).
+
+Tres cosas que quedaron en `bot.ts` y conviene no revertir sin entender:
+
+- `msgRetryCounterCache` es **una sola instancia compartida entre sockets**
+  (`TtlCache`, 24h). Si vuelve a crearse por socket, el loop vuelve.
+- `shouldIgnoreJid` filtra **solo la cuenta propia** (teléfono + LID). Es el eco
+  multi-dispositivo de los chats que el barbero maneja a mano: el bot no lo usa
+  y no siempre puede descifrarlo. Baileys ackea y corta antes de descifrar, así
+  la cola offline drena. No ampliarlo a terceros: los acuses de entrega
+  (`handleReceipt`) usan el mismo predicado y son la única señal de si al
+  cliente le llegó el mensaje.
+- El caché de enviados (`getMessage`) se **persiste en disco** dentro del
+  `AUTH_DIR`, como protobuf en base64. En memoria sola, cada redeploy dejaba
+  trabados en "Esperando este mensaje" a los destinatarios pendientes.
+  `JSON.stringify` del proto no sirve: convierte los Buffer en `{type:"Buffer"}`.
+
+**Diagnóstico rápido** (los logs de Baileys ahora van a `warn`; subir con
+`BAILEYS_LOG_LEVEL=info`, y `LIBSIGNAL_VERBOSE=1` para el dump de sesiones):
+
+```sh
+ssh venturebyte "docker logs <bot> 2>&1 | grep -c 'sent retry receipt'"   # storm
+ssh venturebyte "docker logs <bot> 2>&1 | grep 'conexion cerrada'"        # ciclo de reconexión
+ssh venturebyte "docker exec <bot> wget -qO- http://127.0.0.1:3001/health"
+```
+
+Ojo: `localhost` dentro del contenedor resuelve a IPv6 y el server escucha en
+IPv4 — usar `127.0.0.1` o el health da "connection refused" y parece caído.
+
 **TODO confirmar dirección exacta** del local con el cliente y reemplazar el placeholder `"HLstudio — Chivilcoy"` en:
 - `server/whatsapp/templates.ts` (constante `HL_DIRECCION_PLACEHOLDER`)
 - Idealmente también en los emails (`server/email/templates/*`).

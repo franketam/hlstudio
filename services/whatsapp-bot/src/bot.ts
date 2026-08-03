@@ -4,17 +4,20 @@ import {
   useMultiFileAuthState,
   Browsers,
   fetchLatestBaileysVersion,
+  areJidsSameUser,
+  jidDecode,
+  proto,
   type WASocket,
   type ConnectionState,
   type WAMessage,
   type WAMessageUpdate,
   type MessageUserReceiptUpdate,
-  type proto,
+  type CacheStore,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import pino from "pino";
 import QRCode from "qrcode";
-import { rm, readdir, unlink } from "node:fs/promises";
+import { rm, readdir, unlink, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
@@ -34,11 +37,79 @@ import { join } from "node:path";
 
 const logger = pino({ level: process.env.LOG_LEVEL ?? "info" });
 
+// Baileys loguea un objeto por cada stanza a nivel `info`. Con la cuenta de un
+// local activo eso son ~135k líneas en 6h: rota el buffer de docker y borra la
+// historia justo cuando hace falta para diagnosticar. `warn` deja los eventos
+// que importan (cierres de conexión, errores de stream) y tira el resto.
+const baileysLogger = pino({
+  level: process.env.BAILEYS_LOG_LEVEL ?? "warn",
+});
+
 // Cuántos mensajes enviados retenemos para responder pedidos de reintento.
 // Cuando un destinatario no puede descifrar (sesión desincronizada, típico en
 // iOS), WhatsApp pide reenvío y baileys nos llama `getMessage(key)`. Si no lo
 // tenemos cacheado, el destinatario queda en "Waiting for this message".
 const SENT_CACHE_MAX = 1_000;
+
+// El caché de enviados vive en el volumen: si solo estuviera en memoria, cada
+// redeploy dejaría a los destinatarios pendientes trabados para siempre en
+// "Esperando este mensaje" (no podemos reenviar lo que ya no tenemos).
+const SENT_CACHE_FILE = "sent-messages.json";
+
+// --- Retry de mensajes entrantes que no podemos descifrar -------------------
+// Baileys, si no le pasás `msgRetryCounterCache`, se crea uno propio POR SOCKET
+// con TTL de 1 hora. Como reconectamos seguido, el contador nunca sobrevive lo
+// suficiente para alcanzar `maxMsgRetryCount`: se resetea a 0 y en `retryCount
+// === 1` baileys llama a `requestPlaceholderResend`, que le pide al teléfono
+// que MANDE EL MENSAJE DE NUEVO.
+//
+// Eso fue el bug del 1-ago-2026: 12 mensajes del sábado que el bot no pudo
+// descifrar quedaron pidiéndose reenvío cada ~50 min durante tres días, y el
+// cliente veía "mensajes del sábado llegando ahora". Un caché compartido entre
+// sockets y con TTL largo hace que el contador realmente llegue al límite y
+// baileys deje de pedir.
+const MSG_RETRY_TTL_MS = 24 * 60 * 60_000;
+const MSG_RETRY_MAX_ENTRIES = 5_000;
+const MAX_MSG_RETRY_COUNT = 3;
+
+/**
+ * `CacheStore` mínimo con TTL y tope de entradas. Evita sumar `node-cache` como
+ * dependencia solo para esto.
+ */
+class TtlCache implements CacheStore {
+  private readonly entries = new Map<string, { value: unknown; expiresAt: number }>();
+
+  constructor(
+    private readonly ttlMs: number,
+    private readonly maxEntries: number
+  ) {}
+
+  get<T>(key: string): T | undefined {
+    const hit = this.entries.get(key);
+    if (!hit) return undefined;
+    if (hit.expiresAt <= Date.now()) {
+      this.entries.delete(key);
+      return undefined;
+    }
+    return hit.value as T;
+  }
+
+  set<T>(key: string, value: T): void {
+    if (!this.entries.has(key) && this.entries.size >= this.maxEntries) {
+      const oldest = this.entries.keys().next().value;
+      if (oldest !== undefined) this.entries.delete(oldest);
+    }
+    this.entries.set(key, { value, expiresAt: Date.now() + this.ttlMs });
+  }
+
+  del(key: string): void {
+    this.entries.delete(key);
+  }
+
+  flushAll(): void {
+    this.entries.clear();
+  }
+}
 
 // --- Watchdog ---------------------------------------------------------------
 // Toda la lógica de reintento cuelga del evento `connection: "close"`. Si el
@@ -99,6 +170,20 @@ export class WhatsAppBot {
   private starting = false;
   // messageId -> contenido proto, para responder pedidos de reintento.
   private readonly sentMessages = new Map<string, proto.IMessage>();
+  private sentCacheLoaded = false;
+  // Serializa los flush a disco: dos envíos concurrentes no deben pisarse.
+  private sentCacheFlush: Promise<void> = Promise.resolve();
+
+  // Compartido entre TODOS los sockets a propósito — ver MSG_RETRY_TTL_MS.
+  private readonly msgRetryCounterCache = new TtlCache(
+    MSG_RETRY_TTL_MS,
+    MSG_RETRY_MAX_ENTRIES
+  );
+
+  // JIDs de la propia cuenta (teléfono + LID). Los mensajes que llegan desde
+  // acá son el eco multi-dispositivo de los chats que Hugo maneja a mano: el
+  // bot no los usa para nada y no puede descifrarlos.
+  private selfJids: string[] = [];
 
   // --- Watchdog ---
   private supervisorTimer: NodeJS.Timeout | null = null;
@@ -116,6 +201,24 @@ export class WhatsAppBot {
 
   private markProgress(): void {
     this.lastProgressAt = Date.now();
+  }
+
+  /**
+   * Registra los JIDs propios (teléfono y LID). WhatsApp direcciona con los dos
+   * de forma intercambiable, así que hay que reconocer ambos para filtrar el
+   * eco multi-dispositivo.
+   */
+  private rememberSelfJids(...jids: (string | null | undefined)[]): void {
+    for (const jid of jids) {
+      if (!jid) continue;
+      if (this.selfJids.some((known) => areJidsSameUser(known, jid))) continue;
+      this.selfJids.push(jid);
+    }
+  }
+
+  private isSelfJid(jid: string | undefined): boolean {
+    if (!jid) return false;
+    return this.selfJids.some((self) => areJidsSameUser(self, jid));
   }
 
   async start(): Promise<void> {
@@ -145,6 +248,15 @@ export class WhatsAppBot {
 
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
 
+    // El caché de enviados vive en el mismo dir que las credenciales, así que
+    // se carga (y se borra en el logout) junto con ellas.
+    await this.loadSentCache();
+
+    // Antes de que el socket abra ya sabemos quiénes somos: hace falta para
+    // que `shouldIgnoreJid` filtre desde la primera stanza, no recién en
+    // `connection: "open"`.
+    this.rememberSelfJids(state.creds.me?.id, state.creds.me?.lid);
+
     // La versión de WhatsApp Web cambia seguido; si Baileys usa la hardcoded
     // los servidores rechazan el handshake con 405. fetchLatestBaileysVersion
     // consulta el endpoint oficial en runtime.
@@ -164,10 +276,24 @@ export class WhatsAppBot {
       version: waVersion,
       printQRInTerminal: false,
       browser: Browsers.macOS("HLstudio-Bot"),
-      logger: logger.child({ mod: "baileys" }) as unknown as pino.Logger,
+      logger: baileysLogger.child({ mod: "baileys" }) as unknown as pino.Logger,
       generateHighQualityLinkPreview: false,
       syncFullHistory: false,
       markOnlineOnConnect: false,
+      // Compartido entre sockets: sin esto el contador se resetea en cada
+      // reconexión y el bot le pide al teléfono que reenvíe los mismos
+      // mensajes para siempre.
+      msgRetryCounterCache: this.msgRetryCounterCache,
+      maxMsgRetryCount: MAX_MSG_RETRY_COUNT,
+      // El bot es solo de salida: lo que manda la cuenta desde el teléfono nos
+      // llega igual por el eco multi-dispositivo, no lo usamos, y no siempre
+      // podemos descifrarlo. Baileys ackea estas stanzas y corta antes de
+      // intentar descifrar, así que la cola offline drena en vez de repetirse.
+      //
+      // Filtramos SOLO la cuenta propia: los JIDs de terceros tienen que seguir
+      // pasando o perdemos los acuses de entrega, que son la única señal de si
+      // al cliente le llegó el mensaje.
+      shouldIgnoreJid: (jid) => this.isSelfJid(jid),
       // Reenvío en respuesta a "retry receipts". Sin esto, un destinatario que
       // no pudo descifrar queda trabado en "Waiting for this message".
       getMessage: async (key) => {
@@ -218,7 +344,11 @@ export class WhatsAppBot {
         this.lastReadyAt = Date.now();
         const me = sock.user?.id;
         this.pairedNumber = me ? me.split(":")[0] ?? null : null;
-        logger.info({ user: this.pairedNumber }, "WhatsApp pareado y listo");
+        this.rememberSelfJids(me, sock.user?.lid);
+        logger.info(
+          { user: this.pairedNumber, selfJids: this.selfJids },
+          "WhatsApp pareado y listo"
+        );
       }
 
       if (connection === "close") {
@@ -236,6 +366,12 @@ export class WhatsAppBot {
           this.lastError = "sesion expulsada, requiere re-pairing";
           logger.warn("[wa] sesion expulsada, requiere re-pairing");
           // Limpiar AUTH_DIR para que el próximo start() muestre QR nuevo.
+          // Arrastra el caché de enviados, que vive adentro: los mensajes de
+          // la sesión vieja no se pueden reenviar en la sesión nueva.
+          this.sentMessages.clear();
+          this.sentCacheLoaded = false;
+          this.selfJids = [];
+          this.msgRetryCounterCache.flushAll();
           try {
             await rm(this.authDir, { recursive: true, force: true });
             logger.info({ dir: this.authDir }, "AUTH_DIR limpiado");
@@ -451,30 +587,42 @@ export class WhatsAppBot {
    * "Waiting for this message": la sesión de cifrado se vuelve rancia (sobre
    * todo contra iOS) y el destinatario no puede descifrar.
    *
-   * Solo toca `session-<user>.<device>.json` del número dado — NO creds,
+   * Solo toca `session-<user>.<device>.json` de los users dados — NO creds,
    * prekeys, app-state ni sender-keys. Best-effort: loguea y nunca tira.
+   *
+   * Recibe VARIOS users porque WhatsApp migró a direccionamiento LID: la sesión
+   * del mismo contacto puede estar guardada bajo el teléfono (`549…`) o bajo su
+   * LID (`91740…`), según cómo se haya resuelto el JID al enviar. Borrar solo
+   * uno de los dos dejaba intacta justo la sesión que se iba a usar, que es por
+   * qué esta mitigación venía sin efecto.
    */
-  private async resetSession(digits: string): Promise<number> {
-    const prefix = `session-${digits}.`;
+  private async resetSession(users: string[]): Promise<number> {
+    const prefixes = [...new Set(users.filter(Boolean))].map(
+      (u) => `session-${u}.`
+    );
+    if (prefixes.length === 0) return 0;
+
     let deleted = 0;
     try {
+      // Un solo readdir para todos los prefijos: el AUTH_DIR tiene miles de
+      // archivos y esto corre en el camino crítico de cada envío.
       const files = await readdir(this.authDir);
       for (const f of files) {
-        if (f.startsWith(prefix) && f.endsWith(".json")) {
-          try {
-            await unlink(join(this.authDir, f));
-            deleted++;
-          } catch {
-            // ya no está / carrera con otro envío — ignorar
-          }
+        if (!f.endsWith(".json")) continue;
+        if (!prefixes.some((p) => f.startsWith(p))) continue;
+        try {
+          await unlink(join(this.authDir, f));
+          deleted++;
+        } catch {
+          // ya no está / carrera con otro envío — ignorar
         }
       }
     } catch (err) {
-      logger.warn({ digits, err }, "[wa] resetSession: no se pudo leer AUTH_DIR");
+      logger.warn({ users, err }, "[wa] resetSession: no se pudo leer AUTH_DIR");
       return 0;
     }
     if (deleted > 0) {
-      logger.info({ digits, deleted }, "[wa] sesión limpiada, renegocia en el envío");
+      logger.info({ users, deleted }, "[wa] sesión limpiada, renegocia en el envío");
     }
     return deleted;
   }
@@ -487,7 +635,54 @@ export class WhatsAppBot {
     if (digits.length < 8 || digits.length > 15) {
       return { ok: false, error: `numero invalido: ${to}` };
     }
-    return { ok: true, deleted: await this.resetSession(digits) };
+    return { ok: true, deleted: await this.resetSession([digits]) };
+  }
+
+  // --- Caché de mensajes enviados (persistente) ------------------------------
+  //
+  // Se guarda como protobuf en base64: `JSON.stringify` de un `proto.IMessage`
+  // convierte los Buffer en `{type:"Buffer",data:[…]}` y al releerlo baileys ya
+  // no lo puede reenviar.
+
+  private sentCachePath(): string {
+    return join(this.authDir, SENT_CACHE_FILE);
+  }
+
+  private async loadSentCache(): Promise<void> {
+    if (this.sentCacheLoaded) return;
+    this.sentCacheLoaded = true;
+    try {
+      const raw = await readFile(this.sentCachePath(), "utf8");
+      const parsed = JSON.parse(raw) as Record<string, string>;
+      for (const [id, b64] of Object.entries(parsed)) {
+        try {
+          this.sentMessages.set(id, proto.Message.decode(Buffer.from(b64, "base64")));
+        } catch {
+          // entrada corrupta — la salteamos, no vale tirar todo el caché
+        }
+      }
+      logger.info({ count: this.sentMessages.size }, "[wa] caché de enviados cargado");
+    } catch {
+      // no existe todavía (primer arranque / post-logout) — arrancamos vacío
+    }
+  }
+
+  private persistSentCache(): void {
+    // Encadenado: los envíos son concurrentes y dos writes solapados dejarían
+    // el archivo a medio escribir.
+    this.sentCacheFlush = this.sentCacheFlush.then(async () => {
+      const dump: Record<string, string> = {};
+      for (const [id, msg] of this.sentMessages) {
+        dump[id] = Buffer.from(proto.Message.encode(msg).finish()).toString("base64");
+      }
+      try {
+        await writeFile(this.sentCachePath(), JSON.stringify(dump), "utf8");
+      } catch (err) {
+        // No es fatal: el caché en memoria sigue sirviendo hasta el próximo
+        // restart. Solo perdemos durabilidad.
+        logger.warn({ err }, "[wa] no se pudo persistir el caché de enviados");
+      }
+    });
   }
 
   private rememberSentMessage(id: string, message: proto.IMessage): void {
@@ -496,6 +691,7 @@ export class WhatsAppBot {
       if (oldest !== undefined) this.sentMessages.delete(oldest);
     }
     this.sentMessages.set(id, message);
+    this.persistSentCache();
   }
 
   async sendText(
@@ -513,6 +709,10 @@ export class WhatsAppBot {
     }
     let jid = `${digits}@s.whatsapp.net`;
 
+    // Los users bajo los que puede estar guardada la sesión Signal de este
+    // contacto. Arranca con el teléfono y suma lo que resuelva onWhatsApp.
+    const sessionUsers = new Set<string>([digits]);
+
     // Validar/normalizar contra WhatsApp: devuelve el JID canónico y, si aplica,
     // el LID (direccionamiento nuevo, sospechoso del bug "Waiting for this
     // message"). Best-effort: si falla, seguimos con el JID construido a mano.
@@ -525,6 +725,11 @@ export class WhatsAppBot {
           "[wa] onWhatsApp resuelto"
         );
         if (typeof hit.jid === "string" && hit.jid) jid = hit.jid;
+        // `lid` viene tipado como `unknown` en baileys 6.7.24.
+        if (typeof hit.lid === "string" && hit.lid) {
+          const lidUser = jidDecode(hit.lid)?.user;
+          if (lidUser) sessionUsers.add(lidUser);
+        }
       } else {
         logger.warn({ to: digits }, "[wa] onWhatsApp: numero sin cuenta de WhatsApp o sin resultado");
       }
@@ -532,10 +737,15 @@ export class WhatsAppBot {
       logger.warn({ to: digits, err }, "[wa] onWhatsApp fallo, uso JID construido");
     }
 
+    // El JID con el que realmente vamos a enviar es el que manda: si es un LID,
+    // la sesión está bajo el LID y borrar la del teléfono no hacía nada.
+    const jidUser = jidDecode(jid)?.user;
+    if (jidUser) sessionUsers.add(jidUser);
+
     // Limpiar la sesión del destinatario antes de enviar: fuerza una
     // renegociación fresca y esquiva el bug de sesión rancia ("Waiting for
     // this message"). Costo trivial para el volumen de un local.
-    await this.resetSession(digits);
+    await this.resetSession([...sessionUsers]);
 
     try {
       const res = await this.sock.sendMessage(jid, { text });

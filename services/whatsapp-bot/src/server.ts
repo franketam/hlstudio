@@ -9,6 +9,33 @@ import { WhatsAppBot } from "./bot.js";
 
 const logger = pino({ level: process.env.LOG_LEVEL ?? "info" });
 
+// libsignal narra cada renegociación de sesión pasándole el SessionEntry
+// entero a console.info/console.warn (`session_record.js:301`,
+// `session_builder.js:74`). Node expande ese objeto a ~25 líneas de claves,
+// ratchets y buffers. Con el volumen real del local son ~135k líneas cada 6h:
+// el buffer de docker rota y se pierde la historia justo cuando hace falta para
+// diagnosticar. La librería no acepta un logger, así que filtramos por prefijo.
+// LIBSIGNAL_VERBOSE=1 lo devuelve todo si hay que depurar cifrado.
+const LIBSIGNAL_NOISE = [
+  "Removing old closed session",
+  "Closing open session in favor of incoming prekey bundle",
+  "Closing session open",
+];
+
+if (process.env.LIBSIGNAL_VERBOSE !== "1") {
+  const isNoise = (args: unknown[]): boolean =>
+    typeof args[0] === "string" &&
+    LIBSIGNAL_NOISE.some((prefix) => (args[0] as string).startsWith(prefix));
+
+  for (const method of ["info", "warn", "log"] as const) {
+    const passthrough = console[method].bind(console);
+    console[method] = (...args: unknown[]): void => {
+      if (isNoise(args)) return;
+      passthrough(...args);
+    };
+  }
+}
+
 const PORT = Number(process.env.PORT ?? "3001");
 const AUTH_DIR = process.env.AUTH_DIR ?? path.resolve("./.auth");
 const TOKEN = (process.env.WHATSAPP_BOT_TOKEN ?? "").trim();
