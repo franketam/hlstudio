@@ -171,6 +171,25 @@ Tres cosas que quedaron en `bot.ts` y conviene no revertir sin entender:
   `AUTH_DIR`, como protobuf en base64. En memoria sola, cada redeploy dejaba
   trabados en "Esperando este mensaje" a los destinatarios pendientes.
   `JSON.stringify` del proto no sirve: convierte los Buffer en `{type:"Buffer"}`.
+- El reset de sesión Signal es **reactivo, no por envío**. Corría en cada
+  mensaje; mientras apuntaba al user equivocado (`session-<teléfono>.*` cuando
+  el envío resuelve a un LID) era casi un no-op y no se notaba. Al corregir el
+  target pasó a borrar la sesión en uso en cada envío, o sea negociar de cero
+  siempre — más frágil que reusar una sesión que anda. Ahora el pedido de
+  reenvío (`getMessage`) marca al contacto y recién el envío siguiente
+  renegocia. **No volver a hacerlo incondicional.**
+
+Medido en producción (4-ago-2026, dos envíos al mismo número): con sesión rancia
+el mensaje entrega a 2 dispositivos y un tercero pide reenvío (lo cubre el
+caché); tras la renegociación reactiva, 3 acuses de entrega y **cero** pedidos
+de reenvío.
+
+**Ojo con el diagnóstico**: que un `getMessage` dé `cacheHit:false` NO implica
+que el bot haya fallado. WhatsApp le pide a cualquier dispositivo vinculado que
+reponga mensajes de la cuenta, incluidos los que un humano mandó desde WhatsApp
+Web/Desktop — el bot no los tiene y no puede tenerlos. Para saber si un ID es
+nuestro, cruzarlo contra `notificaciones_enviadas.proveedor_id`, que es el
+registro completo de lo que mandó el bot.
 
 **Diagnóstico rápido** (los logs de Baileys ahora van a `warn`; subir con
 `BAILEYS_LOG_LEVEL=info`, y `LIBSIGNAL_VERBOSE=1` para el dump de sesiones):
