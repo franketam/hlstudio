@@ -185,6 +185,13 @@ export class WhatsAppBot {
   // bot no los usa para nada y no puede descifrarlos.
   private selfJids: string[] = [];
 
+  // Users (teléfono o LID) cuya sesión Signal dio evidencia de estar rancia,
+  // porque pidieron reenvío de un mensaje nuestro. Se limpia su sesión en el
+  // próximo envío y se los saca del set. En memoria a propósito: tras un
+  // restart el mecanismo se re-arma solo con el primer pedido de reenvío, y el
+  // caché persistido cubre ese mensaje mientras tanto.
+  private readonly staleSessions = new Set<string>();
+
   // --- Watchdog ---
   private supervisorTimer: NodeJS.Timeout | null = null;
   // Última señal de vida de la conexión: arranque, QR, open o close. NO se
@@ -300,9 +307,19 @@ export class WhatsAppBot {
         const id = key?.id;
         const found = id ? this.sentMessages.get(id) : undefined;
         // Si nos llaman acá es porque el destinatario no pudo descifrar y pidió
-        // reenvío: señal directa del problema "Waiting for this message".
+        // reenvío: señal directa del problema "Waiting for this message". Es
+        // también la ÚNICA evidencia confiable de que la sesión con ese
+        // contacto quedó rancia, así que la anotamos para limpiarla en el
+        // próximo envío (ver sendText).
+        const staleUser = jidDecode(key?.remoteJid ?? undefined)?.user;
+        if (staleUser) this.staleSessions.add(staleUser);
         logger.info(
-          { msgId: id, remoteJid: key?.remoteJid, cacheHit: Boolean(found) },
+          {
+            msgId: id,
+            remoteJid: key?.remoteJid,
+            cacheHit: Boolean(found),
+            marcadoRancio: Boolean(staleUser),
+          },
           "[wa] retry: getMessage solicitado"
         );
         return found ?? undefined;
@@ -371,6 +388,7 @@ export class WhatsAppBot {
           this.sentMessages.clear();
           this.sentCacheLoaded = false;
           this.selfJids = [];
+          this.staleSessions.clear();
           this.msgRetryCounterCache.flushAll();
           try {
             await rm(this.authDir, { recursive: true, force: true });
@@ -742,10 +760,21 @@ export class WhatsAppBot {
     const jidUser = jidDecode(jid)?.user;
     if (jidUser) sessionUsers.add(jidUser);
 
-    // Limpiar la sesión del destinatario antes de enviar: fuerza una
-    // renegociación fresca y esquiva el bug de sesión rancia ("Waiting for
-    // this message"). Costo trivial para el volumen de un local.
-    await this.resetSession([...sessionUsers]);
+    // Limpiar la sesión SOLO si hay evidencia de que quedó rancia (el contacto
+    // pidió reenvío de algún mensaje nuestro).
+    //
+    // Antes esto corría en CADA envío. Mientras apuntaba al user equivocado era
+    // casi un no-op y no se notaba; al corregir el target (3-ago-2026) pasó a
+    // borrar de verdad la sesión en uso, con lo cual cada mensaje arrancaba una
+    // negociación nueva desde cero — más frágil que reusar una sesión que ya
+    // funciona, y el destinatario veía "Esperando este mensaje" hasta que el
+    // reenvío lo resolvía.
+    const stale = [...sessionUsers].filter((u) => this.staleSessions.has(u));
+    if (stale.length > 0) {
+      await this.resetSession([...sessionUsers]);
+      for (const u of sessionUsers) this.staleSessions.delete(u);
+      logger.info({ to: digits, stale }, "[wa] sesión rancia, renegocia en este envío");
+    }
 
     try {
       const res = await this.sock.sendMessage(jid, { text });
