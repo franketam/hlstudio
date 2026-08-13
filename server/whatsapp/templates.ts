@@ -193,3 +193,48 @@ export function renderCancelacionBarberoWa(
     `📱 ${data.clienteTelefono}`,
   ].join("\n");
 }
+
+// -------------------------------------------------------------------------
+// 5. Alerta al dueño: intento de reserva rechazado por validación
+// -------------------------------------------------------------------------
+
+export type ReservaRechazadaWaData = {
+  /** Teléfono tal como lo escribió quien intentó reservar. */
+  telefonoIngresado: string;
+  nombreIngresado: string;
+  /** Por qué se rechazó, en castellano y ya listo para leer. */
+  motivo: string;
+  /**
+   * Intentos que ocurrieron desde el último aviso y no se notificaron, para no
+   * inundar el teléfono del dueño durante una oleada. 0 = este es el único.
+   */
+  suprimidos: number;
+};
+
+/**
+ * Aviso interno. Va al número pareado por QR, nunca al que intentó reservar:
+ * decírselo a él sería explicarle exactamente qué validación tiene que evadir.
+ */
+export function renderReservaRechazadaWa(data: ReservaRechazadaWaData): string {
+  const lineas = [
+    `⚠️ *HLstudio* — intento de reserva rechazado`,
+    ``,
+    `📱 Teléfono: ${data.telefonoIngresado}`,
+    `👤 Nombre: ${data.nombreIngresado}`,
+    `❓ Motivo: ${data.motivo}`,
+  ];
+
+  if (data.suprimidos > 0) {
+    lineas.push(
+      ``,
+      `Hubo ${data.suprimidos} intento(s) más que no te avisé para no llenarte el teléfono.`
+    );
+  }
+
+  lineas.push(
+    ``,
+    `Al que intentó reservar no se le dijo el motivo, solo que no se pudo.`
+  );
+
+  return lineas.join("\n");
+}

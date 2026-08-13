@@ -29,6 +29,19 @@ export const COPY = {
     sesionExpirada: "Tu sesión expiró. Iniciá sesión de nuevo.",
     noEncontrado: "No encontramos lo que buscabas.",
   },
+  reservar: {
+    // Modal de reserva rechazada.
+    //
+    // Deliberadamente genérico: no dice qué validación falló ni qué campo la
+    // provocó. El detalle le llega al dueño por WhatsApp. Ver
+    // ERROR_RESERVA_RECHAZADA en server/actions/booking.ts.
+    errorRechazo: {
+      titulo: "No pudimos confirmar el turno",
+      ayuda:
+        "Si el problema sigue, escribinos por WhatsApp o pasá por el local y te lo agendamos nosotros.",
+      cerrar: "Volver al formulario",
+    },
+  },
   admin: {
     loginTitle: "Panel HLstudio",
     loginSubtitle: "Ingresá con tu email y contraseña.",

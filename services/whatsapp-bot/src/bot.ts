@@ -72,6 +72,15 @@ const MSG_RETRY_TTL_MS = 24 * 60 * 60_000;
 const MSG_RETRY_MAX_ENTRIES = 5_000;
 const MAX_MSG_RETRY_COUNT = 3;
 
+// Caché del chequeo "este número tiene WhatsApp" (endpoint /exists).
+//
+// TTLs asimétricos a propósito: un "existe" no se vuelve falso casi nunca, y un
+// "no existe" mal resuelto (corte de red, respuesta vacía) estaría rechazando
+// reservas de gente real — que se auto-corrija en minutos.
+const EXISTS_TTL_OK_MS = 24 * 60 * 60_000;
+const EXISTS_TTL_MISS_MS = 15 * 60_000;
+const EXISTS_MAX_ENTRIES = 5_000;
+
 /**
  * `CacheStore` mínimo con TTL y tope de entradas. Evita sumar `node-cache` como
  * dependencia solo para esto.
@@ -191,6 +200,18 @@ export class WhatsAppBot {
   // restart el mecanismo se re-arma solo con el primer pedido de reenvío, y el
   // caché persistido cubre ese mensaje mientras tanto.
   private readonly staleSessions = new Set<string>();
+
+  // Resultado de `onWhatsApp` por número, para el endpoint /exists. Sin caché,
+  // una oleada de reservas se traduce 1:1 en consultas al directorio de
+  // WhatsApp desde una cuenta no oficial, que es justo como te ganás un ban.
+  private readonly existsCacheOk = new TtlCache(
+    EXISTS_TTL_OK_MS,
+    EXISTS_MAX_ENTRIES
+  );
+  private readonly existsCacheMiss = new TtlCache(
+    EXISTS_TTL_MISS_MS,
+    EXISTS_MAX_ENTRIES
+  );
 
   // --- Watchdog ---
   private supervisorTimer: NodeJS.Timeout | null = null;
@@ -600,6 +621,64 @@ export class WhatsAppBot {
   }
 
   /**
+   * ¿Este número tiene cuenta de WhatsApp?
+   *
+   * Consulta al directorio, no manda ningún mensaje: el que reserva de verdad
+   * no percibe fricción, y un número inventado se cae acá.
+   *
+   * Devuelve `unknown: true` cuando no se pudo determinar — bot no pareado,
+   * error de red, respuesta vacía. El caller NUNCA debe tratar eso como "no
+   * existe": ante la duda conviene dejar pasar la reserva, porque rechazar
+   * clientes reales cuesta más caro que dejar entrar algún turno falso.
+   */
+  async numberExists(
+    to: string
+  ): Promise<
+    | { ok: true; exists: boolean; cached: boolean }
+    | { ok: false; unknown: true; error: string }
+  > {
+    const digits = to.replace(/^\+/, "").replace(/\D/g, "");
+    if (digits.length < 8 || digits.length > 15) {
+      // Fuera de rango E.164 no es "indeterminado": es inválido y punto.
+      return { ok: true, exists: false, cached: false };
+    }
+
+    if (this.existsCacheOk.get<boolean>(digits) === true) {
+      return { ok: true, exists: true, cached: true };
+    }
+    if (this.existsCacheMiss.get<boolean>(digits) === false) {
+      return { ok: true, exists: false, cached: true };
+    }
+
+    if (!this.isReady() || !this.sock) {
+      return { ok: false, unknown: true, error: "bot no esta pareado" };
+    }
+
+    try {
+      const results = await this.sock.onWhatsApp(`${digits}@s.whatsapp.net`);
+      // `onWhatsApp` devuelve [] para números sin cuenta. Un undefined, en
+      // cambio, es la librería sin respuesta: indeterminado, no negativo.
+      if (results === undefined) {
+        return { ok: false, unknown: true, error: "onWhatsApp sin respuesta" };
+      }
+
+      const exists = results[0]?.exists === true;
+      if (exists) this.existsCacheOk.set(digits, true);
+      else this.existsCacheMiss.set(digits, false);
+
+      logger.info({ to: digits, exists }, "[wa] chequeo de existencia");
+      return { ok: true, exists, cached: false };
+    } catch (err) {
+      logger.warn({ to: digits, err }, "[wa] chequeo de existencia fallo");
+      return {
+        ok: false,
+        unknown: true,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  /**
    * Borra los archivos de sesión Signal del destinatario en AUTH_DIR, forzando
    * una renegociación fresca en el próximo envío. Es la mitigación al bug
    * "Waiting for this message": la sesión de cifrado se vuelve rancia (sobre
@@ -643,6 +722,26 @@ export class WhatsAppBot {
       logger.info({ users, deleted }, "[wa] sesión limpiada, renegocia en el envío");
     }
     return deleted;
+  }
+
+  /**
+   * Se manda un mensaje a sí mismo (al número pareado por QR).
+   *
+   * Lo usa la app para avisarle al dueño de eventos que no tienen destinatario
+   * natural — por ejemplo, un intento de reserva rechazado por validación: el
+   * que lo provocó no debe enterarse de nada, pero el dueño sí.
+   *
+   * Resuelve el destinatario acá adentro en vez de que lo pase el caller: el
+   * bot es el único que sabe con qué número está pareado, y si se re-parea con
+   * otro teléfono esto sigue andando sin tocar la app.
+   */
+  async sendToSelf(
+    text: string
+  ): Promise<{ ok: true; messageId: string | null } | { ok: false; error: string }> {
+    if (!this.pairedNumber) {
+      return { ok: false, error: "bot sin numero pareado" };
+    }
+    return this.sendText(this.pairedNumber, text);
   }
 
   /** Reset manual de sesión por número (para el endpoint /reset-session). */

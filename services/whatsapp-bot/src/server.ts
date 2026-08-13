@@ -112,6 +112,54 @@ app.post("/send", authGuard, async (req, res) => {
   }
 });
 
+// Chequeo de existencia de un número en WhatsApp. Lo usa el formulario de
+// reserva para validar el teléfono antes de crear el turno.
+//
+// Siempre responde 200: la distinción que le importa al caller está en el body
+// (`exists` vs `unknown`), no en el status. Un 503 acá haría que el cliente HTTP
+// de la app lo confundiera con "bot caído" y se perdería el matiz.
+app.post("/exists", authGuard, async (req, res) => {
+  const body = req.body as { to?: unknown };
+  if (typeof body.to !== "string") {
+    res.status(400).json({ ok: false, error: "body invalido: to requerido" });
+    return;
+  }
+
+  const r = await bot.numberExists(body.to);
+  if (r.ok) {
+    res.json({ ok: true, exists: r.exists, cached: r.cached });
+  } else {
+    res.json({ ok: true, exists: null, unknown: true, error: r.error });
+  }
+});
+
+// Aviso al dueño: manda el texto al número pareado por QR. El caller no
+// necesita saber cuál es — lo resuelve el bot.
+app.post("/notify-self", authGuard, async (req, res) => {
+  const body = req.body as { text?: unknown };
+
+  if (typeof body.text !== "string") {
+    res.status(400).json({ ok: false, error: "body invalido: text requerido" });
+    return;
+  }
+  if (body.text.length === 0 || body.text.length > 4096) {
+    res.status(400).json({ ok: false, error: "text fuera de rango (1..4096)" });
+    return;
+  }
+
+  if (!bot.isReady()) {
+    res.status(503).json({ ok: false, error: "bot no esta pareado" });
+    return;
+  }
+
+  const r = await bot.sendToSelf(body.text);
+  if (r.ok) {
+    res.json({ ok: true, messageId: r.messageId });
+  } else {
+    res.status(500).json({ ok: false, error: r.error });
+  }
+});
+
 // Reset manual de la sesión de cifrado de un número. Fuerza renegociación
 // fresca en el próximo envío (mitigación "Waiting for this message").
 app.post("/reset-session", authGuard, async (req, res) => {

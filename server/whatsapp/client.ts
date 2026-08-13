@@ -149,6 +149,123 @@ export async function sendWhatsApp(input: SendWaInput): Promise<SendWaResult> {
   }
 }
 
+// -------------------------------------------------------------------------
+// Aviso al dueño (número pareado por QR)
+// -------------------------------------------------------------------------
+
+/**
+ * Manda un texto al número con el que está pareado el bot.
+ *
+ * Para eventos que no tienen destinatario natural: el caso de uso es avisarle
+ * al dueño de un intento de reserva rechazado, del que el cliente no debe
+ * enterarse. No devuelve error tipado porque todos los callers son
+ * fire-and-forget: si el aviso no sale, se loguea y listo.
+ */
+export async function sendWhatsAppSelf(
+  text: string
+): Promise<{ ok: boolean; detail?: string }> {
+  const url = (process.env.WHATSAPP_BOT_URL ?? "").trim();
+  if (!url) return { ok: false, detail: "no_bot_url" };
+
+  const token = (process.env.WHATSAPP_BOT_TOKEN ?? "").trim();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), WA_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`${url.replace(/\/$/, "")}/notify-self`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ text }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (!res.ok) {
+      return { ok: false, detail: `bot ${res.status}: ${await safeText(res)}` };
+    }
+    return { ok: true };
+  } catch (err) {
+    clearTimeout(timer);
+    return {
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+// -------------------------------------------------------------------------
+// Chequeo de existencia — validación del teléfono en el formulario de reserva
+// -------------------------------------------------------------------------
+
+/**
+ * `exists: null` significa "no se pudo determinar" (bot caído, sin parear, sin
+ * URL configurada, timeout). El caller debe dejar pasar la reserva en ese caso:
+ * esto es una validación de tipeo / filtro anti-spam, no una barrera de
+ * seguridad, y caerse del lado de rechazar convierte cualquier hipo del bot en
+ * una caída del formulario de reservas.
+ */
+export type WaExistsResult = { exists: boolean | null; detail?: string };
+
+/**
+ * Timeout más corto que el de envío: esto corre con el cliente esperando
+ * frente al formulario. Si el bot no contesta en 4s preferimos dejar pasar el
+ * turno antes que hacerlo esperar.
+ */
+const WA_EXISTS_TIMEOUT_MS = 4_000;
+
+export async function checkWhatsAppExists(
+  telefono: string
+): Promise<WaExistsResult> {
+  const url = (process.env.WHATSAPP_BOT_URL ?? "").trim();
+  if (!url) return { exists: null, detail: "no_bot_url" };
+
+  const to = telefono.replace(/^\+/, "").trim();
+  if (!/^\d{8,15}$/.test(to)) {
+    // Fuera de rango E.164: no hace falta preguntarle a WhatsApp.
+    return { exists: false, detail: "formato_invalido" };
+  }
+
+  const token = (process.env.WHATSAPP_BOT_TOKEN ?? "").trim();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), WA_EXISTS_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`${url.replace(/\/$/, "")}/exists`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ to }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (!res.ok) return { exists: null, detail: `bot ${res.status}` };
+
+    const body = (await res.json()) as {
+      ok?: boolean;
+      exists?: boolean | null;
+      unknown?: boolean;
+      error?: string;
+    };
+
+    if (body.unknown || typeof body.exists !== "boolean") {
+      return { exists: null, detail: body.error ?? "indeterminado" };
+    }
+    return { exists: body.exists };
+  } catch (err) {
+    clearTimeout(timer);
+    return {
+      exists: null,
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 async function safeText(res: Response): Promise<string> {
   try {
     const t = await res.text();

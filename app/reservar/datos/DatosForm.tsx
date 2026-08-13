@@ -8,6 +8,8 @@ import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { AlertModal } from "@/components/ui/alert-modal";
+import { COPY } from "@/lib/constants";
 import { createTurnoAction } from "@/app/reservar/datos/actions";
 
 const formSchema = z.object({
@@ -24,14 +26,26 @@ type Props = {
   inicioIso: string;
 };
 
+/**
+ * Rechazo por validación. Va en un modal en vez de como texto al pie: al pie de
+ * un formulario largo el cliente no lo ve y reintenta igual.
+ *
+ * El server manda un único código genérico para todos los motivos, así que acá
+ * no hay nada que ramificar — es a propósito, ver ERROR_RESERVA_RECHAZADA en
+ * server/actions/booking.ts.
+ */
+const CODIGO_RECHAZO = "reserva_rechazada";
+
 export function DatosForm({ barberoId, servicioId, inicioIso }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [serverError, setServerError] = useState<string | null>(null);
+  const [mensajeRechazo, setMensajeRechazo] = useState<string | null>(null);
 
   const {
     register,
     handleSubmit,
+    setFocus,
     formState: { errors },
   } = useForm<FormData>({
     resolver: zodResolver(formSchema),
@@ -40,6 +54,7 @@ export function DatosForm({ barberoId, servicioId, inicioIso }: Props) {
 
   const onSubmit = (data: FormData) => {
     setServerError(null);
+    setMensajeRechazo(null);
     startTransition(async () => {
       const res = await createTurnoAction({
         barberoId,
@@ -48,12 +63,18 @@ export function DatosForm({ barberoId, servicioId, inicioIso }: Props) {
         cliente: data,
       });
       if (!res.ok) {
-        setServerError(res.error.message);
+        if (res.error.code === CODIGO_RECHAZO) {
+          setMensajeRechazo(res.error.message);
+        } else {
+          setServerError(res.error.message);
+        }
         return;
       }
       router.push(`/turno/${encodeURIComponent(res.data.cancelToken)}?nuevo=1`);
     });
   };
+
+  const copyRechazo = COPY.reservar.errorRechazo;
 
   return (
     <form
@@ -140,6 +161,22 @@ export function DatosForm({ barberoId, servicioId, inicioIso }: Props) {
       >
         {pending ? "Confirmando..." : "Confirmar turno"}
       </Button>
+
+      {/*
+        Cuelga del form porque es la validación del form, pero `AlertModal` se
+        renderiza por portal a <body>: en el DOM no queda adentro del <form>.
+      */}
+      <AlertModal
+        open={mensajeRechazo !== null}
+        titulo={copyRechazo.titulo}
+        mensaje={mensajeRechazo ?? ""}
+        detalles={[copyRechazo.ayuda]}
+        textoCerrar={copyRechazo.cerrar}
+        onClose={() => setMensajeRechazo(null)}
+        // Al cerrar, el foco va al teléfono: es el campo que más veces lo causa,
+        // aunque el modal no lo diga.
+        enfocarAlCerrar={() => setFocus("telefono")}
+      />
     </form>
   );
 }

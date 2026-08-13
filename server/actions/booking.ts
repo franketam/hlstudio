@@ -17,6 +17,8 @@ import {
   RATE_LIMITS,
   checkRateLimitForRoute,
 } from "@/lib/rate-limit";
+import { checkWhatsAppExists } from "@/server/whatsapp/client";
+import { alertarReservaRechazada } from "@/server/whatsapp/alertas";
 import { sendConfirmacionEmails } from "@/server/email/send-confirmacion";
 import { sendCancelacionNotifs } from "@/server/email/send-cancelacion";
 
@@ -46,6 +48,24 @@ export type CreateTurnoOk = {
 };
 
 const VENTANA_CANCEL_HORAS = 3;
+
+/**
+ * Error único para todo rechazo por validación del teléfono.
+ *
+ * A propósito NO distingue "no tiene WhatsApp" de "formato inválido": decirle
+ * al que intenta reservar cuál de las dos validaciones falló es explicarle qué
+ * tiene que cambiar para pasar. El detalle va por WhatsApp al dueño
+ * (`alertarReservaRechazada`), que es quien necesita saberlo.
+ *
+ * Contrapartida asumida: el cliente legítimo que se equivoca tipeando tampoco
+ * recibe la pista. El mensaje lo empuja a escribir por WhatsApp o pasar por el
+ * local, que es la salida que le queda.
+ */
+const ERROR_RESERVA_RECHAZADA = {
+  code: "reserva_rechazada",
+  message:
+    "No pudimos confirmar el turno con esos datos. Revisalos y probá de nuevo, o escribinos por WhatsApp.",
+} as const;
 
 // Margen de gracia para clock skew entre cliente / servidor (validación de pasado).
 const GRACIA_CLOCK_SKEW_MS = 5 * 60 * 1000;
@@ -194,8 +214,21 @@ export async function createTurno(
   }
 
   // 5. Cliente: normalizar teléfono, buscar por teléfono, crear si no existe.
-  const telefonoNorm =
-    normalizarTelefonoAR(cliente.telefono) ?? cliente.telefono.trim();
+  //
+  // En el flow público exigimos que el teléfono normalice a E.164. El flow
+  // admin conserva el fallback laxo (walk-in con un número raro que el dueño
+  // anotó a mano). Se corta acá, antes de crear el cliente: un intento
+  // rechazado no debe dejar filas atrás.
+  const telefonoNorm = normalizarTelefonoAR(cliente.telefono);
+  if (!telefonoNorm) {
+    console.warn(`[security] telefono_invalido tel=${cliente.telefono}`);
+    alertarReservaRechazada({
+      telefonoIngresado: cliente.telefono,
+      nombreIngresado: cliente.nombre,
+      motivo: "telefono_invalido",
+    });
+    return { ok: false, error: ERROR_RESERVA_RECHAZADA };
+  }
 
   let clienteId: string;
   const [existing] = await db
@@ -203,6 +236,44 @@ export async function createTurno(
     .from(clientes)
     .where(eq(clientes.telefono, telefonoNorm))
     .limit(1);
+
+  // 5.b Validar que el número tenga cuenta de WhatsApp.
+  //
+  // Es por donde salen la confirmación y el recordatorio, así que un número sin
+  // WhatsApp es un turno que nadie va a poder confirmar — y es también el filtro
+  // más barato contra los turnos falsos, porque un número inventado no tiene
+  // cuenta. Cero fricción: es una consulta al directorio, no se manda nada.
+  //
+  // Solo para clientes nuevos. Al que ya reservó alguna vez no tiene sentido
+  // re-validarlo, y el caso "se equivocó al tipear" queda igual cubierto: un
+  // número mal tipeado no está en la base, así que entra por acá.
+  //
+  // Solo rechazamos con un `false` explícito. Si el chequeo queda indeterminado
+  // —bot caído, sin parear, timeout— dejamos pasar: esto es una validación de
+  // tipeo, y convertir cualquier hipo del bot en una caída del formulario de
+  // reservas cuesta mucho más caro que dejar entrar un turno falso.
+  if (!existing) {
+    const wa = await checkWhatsAppExists(telefonoNorm);
+    if (wa.exists === false) {
+      console.warn(
+        `[security] telefono_sin_whatsapp tel=${telefonoNorm} detalle=${wa.detail ?? "-"}`
+      );
+      alertarReservaRechazada({
+        telefonoIngresado: cliente.telefono,
+        nombreIngresado: cliente.nombre,
+        motivo: "sin_whatsapp",
+      });
+      return { ok: false, error: ERROR_RESERVA_RECHAZADA };
+    }
+    if (wa.exists === null) {
+      // No es un error del usuario, pero conviene verlo en los logs: si esto
+      // aparece seguido, la validación está apagada de hecho y hay que mirar
+      // el bot.
+      console.warn(
+        `[security] chequeo_whatsapp_indeterminado tel=${telefonoNorm} detalle=${wa.detail ?? "-"}`
+      );
+    }
+  }
 
   if (existing) {
     clienteId = existing.id;
