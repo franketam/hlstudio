@@ -20,6 +20,10 @@ import {
 } from "@/lib/availability";
 import { getSession } from "@/lib/session";
 import { ymdLocal } from "@/lib/format";
+import {
+  bloquearIdentificadores,
+  type NuevoBloqueo,
+} from "@/server/actions/anti-abuso";
 import { sendConfirmacionEmails } from "@/server/email/send-confirmacion";
 import { sendCancelacionNotifs } from "@/server/email/send-cancelacion";
 
@@ -604,4 +608,171 @@ export async function cancelTurnoAdminAction(
   revalidatePath(`/admin/agenda?fecha=${fechaYmd}`);
 
   return { ok: true, data: { turnoId } };
+}
+
+// ---------------------------------------------------------------------------
+// 5. bloquearDesdeTurnoAction — lista negra a partir de un turno
+// ---------------------------------------------------------------------------
+
+const bloquearInputSchema = z.object({
+  turnoId: z.string().uuid("Turno inválido."),
+  /** Qué identificadores del turno bloquear. Al menos uno. */
+  bloquearIp: z.boolean().default(false),
+  bloquearEmail: z.boolean().default(false),
+  bloquearTelefono: z.boolean().default(false),
+  motivo: z
+    .string()
+    .max(300, "El motivo no puede superar los 300 caracteres.")
+    .optional()
+    .transform((v) => (v && v.trim().length > 0 ? v.trim() : null)),
+  /** Cancelar además el turno. Casi siempre sí, pero es decisión del dueño. */
+  cancelarTurno: z.boolean().default(true),
+});
+
+export type BloquearDesdeTurnoInput = z.input<typeof bloquearInputSchema>;
+
+export type BloquearDesdeTurnoOk = {
+  bloqueados: { tipo: string; valor: string }[];
+  turnoCancelado: boolean;
+};
+
+/**
+ * Bloquea para el formulario público los identificadores de un turno: la IP
+ * desde la que se creó, el email y el teléfono del cliente.
+ *
+ * Los tres van juntos porque el abusador rota el que puede: el caso real usó
+ * tres teléfonos distintos desde una misma IP. Bloquear solo el teléfono no
+ * habría servido de nada.
+ *
+ * La IP puede no estar disponible (turnos cargados por el admin, o previos a la
+ * migración 0006). En ese caso simplemente no se bloquea esa dimensión.
+ */
+export async function bloquearDesdeTurnoAction(
+  input: BloquearDesdeTurnoInput
+): Promise<ActionResult<BloquearDesdeTurnoOk>> {
+  const auth = await requireSession();
+  if (auth) return auth;
+
+  const parsed = bloquearInputSchema.safeParse(input);
+  if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    return {
+      ok: false,
+      error: {
+        code: "validation_error",
+        message: first?.message ?? "Datos inválidos.",
+      },
+    };
+  }
+
+  const { turnoId, bloquearIp, bloquearEmail, bloquearTelefono, motivo, cancelarTurno } =
+    parsed.data;
+
+  if (!bloquearIp && !bloquearEmail && !bloquearTelefono) {
+    return {
+      ok: false,
+      error: {
+        code: "nada_que_bloquear",
+        message: "Elegí al menos un dato para bloquear.",
+      },
+    };
+  }
+
+  const [row] = await db
+    .select({
+      id: turnos.id,
+      estado: turnos.estado,
+      inicioTs: turnos.inicioTs,
+      creadoIp: turnos.creadoIp,
+      clienteEmail: clientes.email,
+      clienteTelefono: clientes.telefono,
+    })
+    .from(turnos)
+    .innerJoin(clientes, eq(clientes.id, turnos.clienteId))
+    .where(eq(turnos.id, turnoId))
+    .limit(1);
+
+  if (!row) {
+    return {
+      ok: false,
+      error: { code: "no_encontrado", message: "Turno no encontrado." },
+    };
+  }
+
+  const entradas: NuevoBloqueo[] = [];
+  if (bloquearIp && row.creadoIp) {
+    entradas.push({ tipo: "ip", valor: row.creadoIp, motivo, turnoOrigenId: turnoId });
+  }
+  if (bloquearEmail && row.clienteEmail) {
+    entradas.push({
+      tipo: "email",
+      valor: row.clienteEmail,
+      motivo,
+      turnoOrigenId: turnoId,
+    });
+  }
+  if (bloquearTelefono && row.clienteTelefono) {
+    entradas.push({
+      tipo: "telefono",
+      valor: row.clienteTelefono,
+      motivo,
+      turnoOrigenId: turnoId,
+    });
+  }
+
+  if (entradas.length === 0) {
+    return {
+      ok: false,
+      error: {
+        code: "sin_datos",
+        message:
+          "Este turno no tiene esos datos cargados. Si es viejo o lo cargaste vos, no tiene IP registrada.",
+      },
+    };
+  }
+
+  let bloqueados: { tipo: string; valor: string }[];
+  let turnoCancelado = false;
+
+  try {
+    bloqueados = await bloquearIdentificadores(entradas);
+
+    // Cancelar es una decisión separada del bloqueo: bloquear impide reservas
+    // futuras, no toca lo ya agendado. Se ofrece junta porque en la práctica el
+    // que bloquea un turno falso también lo quiere fuera de la agenda.
+    if (cancelarTurno && row.estado === "confirmado") {
+      await db
+        .update(turnos)
+        .set({ estado: "cancelado_admin", updatedAt: new Date() })
+        .where(eq(turnos.id, turnoId));
+      turnoCancelado = true;
+    }
+  } catch (err) {
+    console.error("[admin.agenda.bloquearDesdeTurno] error", err);
+    return {
+      ok: false,
+      error: {
+        code: "internal_error",
+        message: "No pudimos guardar el bloqueo. Probá de nuevo.",
+      },
+    };
+  }
+
+  console.warn(
+    `[security] bloqueo_manual turno=${turnoId} valores=${bloqueados
+      .map((b) => `${b.tipo}=${b.valor}`)
+      .join(",")} cancelado=${turnoCancelado}`
+  );
+
+  // A propósito NO se notifica al cliente de la cancelación: avisarle al que
+  // abusa que lo detectaste solo le dice que pruebe de otra forma. Si el dueño
+  // quiere avisarle, cancela desde el botón normal, que sí notifica.
+
+  const fechaYmd = ymdLocal(row.inicioTs);
+  revalidatePath("/admin");
+  revalidatePath("/admin/agenda");
+  revalidatePath(`/admin/agenda?fecha=${fechaYmd}`);
+  revalidatePath("/admin/config/bloqueos-acceso");
+
+  return { ok: true, data: { bloqueados, turnoCancelado } };
 }

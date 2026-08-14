@@ -115,6 +115,21 @@ export default function AdminConfigHomePage() {
             </Button>
           </CardContent>
         </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>{COPY.admin.config.cards.bloqueosAcceso.title}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            <p className="text-muted-foreground">
+              {COPY.admin.config.cards.bloqueosAcceso.desc}
+            </p>
+            <Button asChild size="sm">
+              <Link href="/admin/config/bloqueos-acceso">
+                {COPY.admin.config.cards.bloqueosAcceso.cta}
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

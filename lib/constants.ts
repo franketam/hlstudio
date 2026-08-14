@@ -88,6 +88,11 @@ export const COPY = {
           desc: "Franjas fijas que un barbero no atiende cada semana (ej. todos los martes a la tarde). Se repiten indefinidamente.",
           cta: "Administrar",
         },
+        bloqueosAcceso: {
+          title: "Bloqueos de reservas",
+          desc: "Teléfonos, emails e IPs que no pueden reservar por la web. Vos les seguís pudiendo cargar turnos a mano.",
+          cta: "Administrar",
+        },
       },
     },
     servicios: {

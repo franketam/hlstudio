@@ -22,6 +22,11 @@ export type TurnoAgendaRow = {
   duracionMin: number;
   clienteNombre: string;
   clienteTelefono: string;
+  clienteEmail: string | null;
+  /** Null en turnos cargados por el admin y en los previos a la migración 0006. */
+  creadoIp: string | null;
+  creadoUserAgent: string | null;
+  origen: string;
 };
 
 /**
@@ -50,6 +55,10 @@ export async function listTurnosDelDia(
       duracionMin: servicios.duracionMin,
       clienteNombre: clientes.nombre,
       clienteTelefono: clientes.telefono,
+      clienteEmail: clientes.email,
+      creadoIp: turnos.creadoIp,
+      creadoUserAgent: turnos.creadoUserAgent,
+      origen: turnos.origen,
     })
     .from(turnos)
     .innerJoin(barberos, eq(barberos.id, turnos.barberoId))

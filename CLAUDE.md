@@ -146,6 +146,38 @@ de WhatsApp antes de escribir nada en la base.
   Sin el throttle, una oleada de 200 intentos serían 200 mensajes en su teléfono
   y el aviso se volvería el ataque.
 
+### Lista negra y límites (Nivel 1, ago-2026)
+
+`server/actions/anti-abuso.ts`. Todo aplica **solo al flow público**; el admin
+puede seguir cargando turnos a mano para cualquiera.
+
+- **`bloqueos_acceso`** — tabla por identificador (`ip` | `email` | `telefono`),
+  no columnas en `clientes`: la IP es del intento, no del cliente, y el abusador
+  genera un `cliente` nuevo por cada teléfono que inventa. Unique `(tipo, valor)`;
+  re-bloquear reactiva la fila en vez de duplicar. `activo=false` al desbloquear
+  para no perder el historial.
+  - **La normalización tiene que ser idéntica al escribir y al leer**
+    (`normalizarValorBloqueo`): teléfono en E.164, email e IP en minúsculas. Si
+    divergen, el bloqueo no matchea nunca y falla en silencio — el peor modo de
+    fallar, porque parece puesto y no hace nada.
+- **Tope de 3 turnos activos** por cliente (`MAX_TURNOS_ACTIVOS`).
+- **Un solo turno por franja** por cliente. El caso real fue una persona
+  reservando el mismo horario con los dos barberos, 50 segundos de diferencia.
+- **Rate limit 2/IP/hora** (bajado de 5). El caso que lo motivó hizo 2 reservas
+  + 2 intentos rechazados en 71 segundos y pasó cómodo bajo el límite viejo.
+
+Todos los rechazos devuelven el mismo `reserva_rechazada` genérico. Solo el de
+lista negra dispara alerta al dueño (significa que el bloqueado volvió); los
+topes no, porque suelen ser un cliente real pasándose y sería ruido.
+
+**UI**: botón *Bloquear* en cada turno de la agenda — muestra teléfono, email e
+IP con checkbox y ofrece cancelar el turno en el mismo paso (sin notificar al
+cliente: avisarle al que abusa solo le dice que pruebe de otra forma).
+Administración en `/admin/config/bloqueos-acceso`.
+
+⚠️ **Cuidado con bloquear IPs compartidas** (wifi familiar, del local). La UI lo
+advierte pero la decisión es del dueño.
+
 ### Forense: IP y navegador por turno
 
 `turnos.creado_ip`, `creado_user_agent` y `origen` ('publico' | 'admin'). Sin

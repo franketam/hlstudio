@@ -39,6 +39,12 @@ export const turnoEstadoEnum = pgEnum("turno_estado", [
   "no_show",
 ]);
 
+export const bloqueoTipoEnum = pgEnum("bloqueo_tipo", [
+  "ip",
+  "email",
+  "telefono",
+]);
+
 export const estadoPagoEnum = pgEnum("estado_pago", [
   "pendiente_local",
   "pagado_seña",
@@ -327,6 +333,57 @@ export const turnos = pgTable(
 );
 
 /**
+ * Lista negra de identificadores para el formulario público.
+ *
+ * Tabla propia y no columnas en `clientes` por dos razones:
+ *  - La IP no es propiedad de un cliente: es del intento. El mismo abusador
+ *    genera un `cliente` nuevo por cada teléfono que inventa, así que marcar
+ *    la fila de cliente no alcanza para frenarlo.
+ *  - Permite bloquear un email o un teléfono que todavía no reservó nunca.
+ *
+ * Solo aplica al flow público. El admin puede seguir cargando turnos a mano
+ * para cualquiera: el bloqueo es contra el formulario, no contra la persona.
+ *
+ * `activo` en vez de borrar la fila: desbloquear no debería perder el registro
+ * de que en su momento se bloqueó, ni el motivo.
+ */
+export const bloqueosAcceso = pgTable(
+  "bloqueos_acceso",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tipo: bloqueoTipoEnum("tipo").notNull(),
+    /**
+     * Valor normalizado del identificador. Teléfono en E.164, email en
+     * minúsculas, IP tal como la reporta el proxy. La normalización la hace
+     * `server/actions/anti-abuso.ts` en la escritura Y en la lectura: si
+     * divergen, el bloqueo no matchea nunca y falla silencioso.
+     */
+    valor: text("valor").notNull(),
+    motivo: text("motivo"),
+    /** Turno que disparó el bloqueo, para poder reconstruir por qué se puso. */
+    turnoOrigenId: uuid("turno_origen_id").references(() => turnos.id, {
+      onDelete: "set null",
+    }),
+    activo: boolean("activo").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    // Un identificador aparece una sola vez: re-bloquear reactiva la fila
+    // existente en vez de duplicarla.
+    tipoValorUnique: uniqueIndex("bloqueos_acceso_tipo_valor_unique").on(
+      t.tipo,
+      t.valor
+    ),
+    activoIdx: index("bloqueos_acceso_activo_idx").on(t.activo),
+  })
+);
+
+/**
  * Log de notificaciones enviadas (idempotencia para los recordatorios T-24h / T-3h).
  * Evita doble envío si el cron se reejecuta.
  */
@@ -374,6 +431,9 @@ export type BloqueoAgenda = typeof bloqueosAgenda.$inferSelect;
 export type BloqueoRecurrente = typeof bloqueosRecurrentes.$inferSelect;
 export type NuevoBloqueoRecurrente = typeof bloqueosRecurrentes.$inferInsert;
 export type PrecioBarberoServicio = typeof preciosBarberoServicio.$inferSelect;
+export type BloqueoAcceso = typeof bloqueosAcceso.$inferSelect;
+export type NuevoBloqueoAcceso = typeof bloqueosAcceso.$inferInsert;
+export type BloqueoTipo = (typeof bloqueoTipoEnum.enumValues)[number];
 
 // Las exports `date` y `integer` no se usan acá pero se mantienen por si el schema crece.
 export { date, integer };

@@ -128,7 +128,12 @@ export async function checkRateLimitForRoute(
  * Constantes de límite reutilizables. Centralizadas para tunear sin tocar callers.
  */
 export const RATE_LIMITS = {
-  CREATE_TURNO: { limit: 5, windowMs: 60 * 60 * 1000 }, // 5 / hora
+  // 2/hora, bajado desde 5 en ago-2026. El caso real que lo motivó hizo 2
+  // reservas + 2 intentos rechazados en 71 segundos desde la misma IP y pasó
+  // cómodo bajo el límite viejo. Nadie legítimo saca 3 turnos en una hora desde
+  // el mismo lugar; el que reserva para toda la familia lo hace desde el panel
+  // o llama al local.
+  CREATE_TURNO: { limit: 2, windowMs: 60 * 60 * 1000 },
   LOGIN: { limit: 10, windowMs: 15 * 60 * 1000 }, // 10 / 15 min
   CANCEL_TURNO: { limit: 20, windowMs: 60 * 60 * 1000 }, // 20 / hora
 } as const;

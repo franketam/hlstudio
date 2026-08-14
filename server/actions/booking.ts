@@ -18,6 +18,10 @@ import {
   checkRateLimitForRoute,
 } from "@/lib/rate-limit";
 import { getRequestInfo } from "@/lib/request-info";
+import {
+  chequearBloqueos,
+  chequearLimitesCliente,
+} from "@/server/actions/anti-abuso";
 import { checkWhatsAppExists } from "@/server/whatsapp/client";
 import { alertarReservaRechazada } from "@/server/whatsapp/alertas";
 import { sendConfirmacionEmails } from "@/server/email/send-confirmacion";
@@ -239,12 +243,45 @@ export async function createTurno(
     return { ok: false, error: ERROR_RESERVA_RECHAZADA };
   }
 
+  // 5.a Lista negra. Va antes del chequeo de WhatsApp a propósito: si el
+  // identificador está bloqueado no hay razón para gastar una consulta al
+  // directorio ni para crear nada.
+  const bloqueo = await chequearBloqueos({
+    ip: req.ip,
+    email: cliente.email,
+    telefono: telefonoNorm,
+  });
+  if (!bloqueo.permitido) {
+    console.warn(
+      `[security] intento_de_bloqueado motivo=${bloqueo.motivo} ${bloqueo.detalle} ${origenLog}`
+    );
+    // Sí vale avisarle al dueño: significa que el que bloqueó volvió a probar.
+    // El throttle de 10 min impide que se convierta en inundación.
+    alertarReservaRechazada({
+      telefonoIngresado: cliente.telefono,
+      nombreIngresado: cliente.nombre,
+      motivo: "bloqueado",
+    });
+    return { ok: false, error: ERROR_RESERVA_RECHAZADA };
+  }
+
   let clienteId: string;
   const [existing] = await db
     .select({ id: clientes.id })
     .from(clientes)
     .where(eq(clientes.telefono, telefonoNorm))
     .limit(1);
+
+  // 5.a.bis Límites por cliente: tope de turnos activos y un solo turno por
+  // franja. No se le avisa al dueño — el que topea suele ser un cliente real
+  // pasándose de la raya, no un ataque, y alertarlo sería ruido.
+  const limites = await chequearLimitesCliente(existing?.id ?? null, inicio, fin);
+  if (!limites.permitido) {
+    console.warn(
+      `[security] limite_cliente motivo=${limites.motivo} ${limites.detalle} ${origenLog}`
+    );
+    return { ok: false, error: ERROR_RESERVA_RECHAZADA };
+  }
 
   // 5.b Validar que el número tenga cuenta de WhatsApp.
   //

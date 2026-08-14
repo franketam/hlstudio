@@ -11,7 +11,9 @@ import {
   ymdLocal,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { describirUserAgent } from "@/lib/user-agent";
 import { CancelarTurnoAdminButton } from "./CancelarTurnoAdminButton";
+import { BloquearTurnoButton } from "./BloquearTurnoButton";
 
 export const metadata = {
   title: "Agenda",
@@ -101,6 +103,7 @@ export default async function AdminAgendaPage({
             const cancelado =
               t.estado === "cancelado_cliente" ||
               t.estado === "cancelado_admin";
+            const resumen = `${horaCortaAR(t.inicioTs)} — ${t.clienteNombre} · ${t.servicioNombre}`;
             return (
               <li
                 key={t.id}
@@ -151,15 +154,36 @@ export default async function AdminAgendaPage({
                       {formatPrecioARS(t.precioTotal)}
                     </span>
                   </div>
+                  {t.creadoIp ? (
+                    <div className="sm:col-span-2">
+                      <span className="text-muted-foreground">Origen: </span>
+                      <span className="numeral">{t.creadoIp}</span>
+                      <span className="ml-2 text-muted-foreground">
+                        {describirUserAgent(t.creadoUserAgent)}
+                      </span>
+                    </div>
+                  ) : t.origen === "admin" ? (
+                    <div className="sm:col-span-2 text-muted-foreground">
+                      Cargado desde el panel
+                    </div>
+                  ) : null}
                 </div>
-                {!cancelado ? (
-                  <div className="mt-4 flex justify-end border-t border-border/60 pt-3">
+                <div className="mt-4 flex flex-wrap items-start justify-end gap-2 border-t border-border/60 pt-3">
+                  <BloquearTurnoButton
+                    turnoId={t.id}
+                    resumen={resumen}
+                    ip={t.creadoIp}
+                    email={t.clienteEmail}
+                    telefono={t.clienteTelefono}
+                    cancelable={!cancelado}
+                  />
+                  {!cancelado ? (
                     <CancelarTurnoAdminButton
                       turnoId={t.id}
-                      resumen={`${horaCortaAR(t.inicioTs)} — ${t.clienteNombre} · ${t.servicioNombre}`}
+                      resumen={resumen}
                     />
-                  </div>
-                ) : null}
+                  ) : null}
+                </div>
               </li>
             );
           })}

@@ -12,11 +12,15 @@ import { renderReservaRechazadaWa } from "@/server/whatsapp/templates";
  * tiene que enterarse de que está pasando.
  */
 
-export type MotivoRechazo = "sin_whatsapp" | "telefono_invalido";
+export type MotivoRechazo =
+  | "sin_whatsapp"
+  | "telefono_invalido"
+  | "bloqueado";
 
 const TEXTO_MOTIVO: Record<MotivoRechazo, string> = {
   sin_whatsapp: "el número no tiene cuenta de WhatsApp",
   telefono_invalido: "el número no se pudo interpretar (formato inválido)",
+  bloqueado: "está en la lista de bloqueados (volvió a intentar)",
 };
 
 /**
