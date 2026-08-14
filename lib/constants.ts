@@ -3,6 +3,21 @@
  */
 
 export const APP_NAME = "HLstudio";
+
+/**
+ * WhatsApp de contacto del local, en E.164 sin '+' (formato que espera wa.me).
+ *
+ * Es el MISMO número con el que está pareado el bot (`/status` → pairedNumber).
+ * Si algún día se re-parea con otro teléfono, hay que actualizarlo acá: el link
+ * no lo resuelve solo, a propósito, para no depender de que el bot esté vivo
+ * para poder renderizar el formulario.
+ */
+export const WHATSAPP_CONTACTO = "5492346531909";
+
+/** Link de click-to-chat con mensaje prellenado, para que llegue con contexto. */
+export function whatsappUrl(texto: string): string {
+  return `https://wa.me/${WHATSAPP_CONTACTO}?text=${encodeURIComponent(texto)}`;
+}
 export const APP_TAGLINE = "Barbería · Chivilcoy";
 export const APP_SHORT_DESCRIPTION =
   "Cortes, barba y cuidado masculino. Reservá tu turno en menos de un minuto.";
@@ -38,7 +53,10 @@ export const COPY = {
     errorRechazo: {
       titulo: "No pudimos confirmar el turno",
       ayuda:
-        "Si el problema sigue, escribinos por WhatsApp o pasá por el local y te lo agendamos nosotros.",
+        "También podés pasar por el local y lo chequeamos con vos en el momento.",
+      whatsappCta: "Escribinos por WhatsApp",
+      whatsappTextoPrellenado:
+        "Hola! Intenté sacar un turno por la web y no me dejó. ¿Me pueden ayudar?",
       cerrar: "Volver al formulario",
     },
   },

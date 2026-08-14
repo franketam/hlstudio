@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AlertModal } from "@/components/ui/alert-modal";
-import { COPY } from "@/lib/constants";
+import { COPY, whatsappUrl } from "@/lib/constants";
 import { createTurnoAction } from "@/app/reservar/datos/actions";
 
 const formSchema = z.object({
@@ -172,6 +172,10 @@ export function DatosForm({ barberoId, servicioId, inicioIso }: Props) {
         mensaje={mensajeRechazo ?? ""}
         detalles={[copyRechazo.ayuda]}
         textoCerrar={copyRechazo.cerrar}
+        enlace={{
+          href: whatsappUrl(copyRechazo.whatsappTextoPrellenado),
+          texto: copyRechazo.whatsappCta,
+        }}
         onClose={() => setMensajeRechazo(null)}
         // Al cerrar, el foco va al teléfono: es el campo que más veces lo causa,
         // aunque el modal no lo diga.

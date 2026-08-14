@@ -166,9 +166,30 @@ puede seguir cargando turnos a mano para cualquiera.
 - **Rate limit 2/IP/hora** (bajado de 5). El caso que lo motivó hizo 2 reservas
   + 2 intentos rechazados en 71 segundos y pasó cómodo bajo el límite viejo.
 
-Todos los rechazos devuelven el mismo `reserva_rechazada` genérico. Solo el de
-lista negra dispara alerta al dueño (significa que el bloqueado volvió); los
-topes no, porque suelen ser un cliente real pasándose y sería ruido.
+**Los cinco rechazos anti-abuso devuelven el MISMO `reserva_rechazada`**: rate
+limit, teléfono no normalizable, sin WhatsApp, lista negra y topes por cliente.
+Es deliberado y no hay que "arreglarlo":
+
+- Un mensaje distinguible por defensa le dice al que prueba **cuál** activó y,
+  por lo tanto, qué cambiar. El "demasiados intentos" era el peor: confirma que
+  hay un límite e invita a medir la ventana esperando y reintentando.
+- Con la respuesta unificada no puede separar "me limitaron" de "el dato estaba
+  mal".
+- El mensaje **no afirma nada falso**: no dice qué falló, pero tampoco sugiere
+  que el turno pueda haber quedado agendado (en los rechazos nunca se crea). Se
+  probó esa variante y se descartó: le ahorraba información al que abusa, pero
+  mandaba clientes reales al local a un turno inexistente.
+- La contrapartida sigue siendo real: el cliente legítimo que topea el límite no
+  entiende por qué. Por eso el modal ofrece un botón directo a WhatsApp
+  (`WHATSAPP_CONTACTO` en `lib/constants.ts`, el mismo número con el que está
+  pareado el bot), con texto prellenado para que la consulta llegue con contexto.
+- **La opacidad es solo para el cliente.** Los logs sí distinguen cada motivo
+  (`[security] rate_limited`, `telefono_sin_whatsapp`, `intento_de_bloqueado`,
+  `limite_cliente`) con IP y navegador.
+
+Solo el de lista negra dispara alerta al dueño (significa que el bloqueado
+volvió); los topes y el rate limit no, porque suelen ser un cliente real
+pasándose y sería ruido.
 
 **UI**: botón *Bloquear* en cada turno de la agenda — muestra teléfono, email e
 IP con checkbox y ofrece cancelar el turno en el mismo paso (sin notificar al

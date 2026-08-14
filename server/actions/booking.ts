@@ -68,8 +68,12 @@ const VENTANA_CANCEL_HORAS = 3;
  */
 const ERROR_RESERVA_RECHAZADA = {
   code: "reserva_rechazada",
+  // No dice qué validación falló (ver CLAUDE.md) pero tampoco afirma nada
+  // falso: en los rechazos el turno no se crea, y el mensaje no sugiere lo
+  // contrario. La salida que le queda al cliente legítimo es WhatsApp, que el
+  // modal ofrece como botón.
   message:
-    "No pudimos confirmar el turno con esos datos. Revisalos y probá de nuevo, o escribinos por WhatsApp.",
+    "Revisá los datos y probá de nuevo, o comunicate por WhatsApp para confirmar tu turno.",
 } as const;
 
 // Margen de gracia para clock skew entre cliente / servidor (validación de pasado).
@@ -91,20 +95,23 @@ const MAX_ADELANTO_DIAS = 90;
 export async function createTurno(
   input: CreateTurnoInput
 ): Promise<ActionResult<CreateTurnoOk>> {
-  // Rate limit: 5 turnos por IP por hora. Endpoint público, target de abuso.
+  // Rate limit por IP. Endpoint público, target de abuso.
+  //
+  // Devuelve el MISMO error genérico que el resto de los rechazos, a propósito.
+  // Un "demasiados intentos" distinguible le confirma al que prueba que existe
+  // un límite y lo invita a medirlo: espera, reintenta y deduce la ventana. Con
+  // la respuesta unificada no puede separar "me limitaron" de "el dato estaba
+  // mal", que es justo la ambigüedad que queremos.
   const rl = await checkRateLimitForRoute(
     "reservar",
     RATE_LIMITS.CREATE_TURNO.limit,
     RATE_LIMITS.CREATE_TURNO.windowMs
   );
   if (!rl.ok) {
-    return {
-      ok: false,
-      error: {
-        code: "rate_limited",
-        message: "Demasiados intentos. Probá en un rato.",
-      },
-    };
+    // El log sí lo distingue: `checkRateLimitForRoute` ya emite
+    // `[security] rate_limited` con la IP. La opacidad es para el cliente, no
+    // para vos.
+    return { ok: false, error: ERROR_RESERVA_RECHAZADA };
   }
 
   // Origen del request. Se resuelve temprano porque lo necesitan tanto el turno

@@ -27,6 +27,12 @@ type Props = {
   /** Líneas de ayuda secundarias. */
   detalles?: string[];
   textoCerrar: string;
+  /**
+   * Acción principal opcional hacia afuera (ej. abrir WhatsApp). Se renderiza
+   * arriba del botón de cerrar porque suele ser lo que el usuario necesita
+   * hacer: cerrar es la salida, esto es la solución.
+   */
+  enlace?: { href: string; texto: string };
   onClose: () => void;
   /**
    * Dónde dejar el foco al cerrar. Sin esto vuelve a quien lo tenía antes de
@@ -42,6 +48,7 @@ export function AlertModal({
   mensaje,
   detalles = [],
   textoCerrar,
+  enlace,
   onClose,
   enfocarAlCerrar,
 }: Props) {
@@ -115,10 +122,20 @@ export function AlertModal({
           </p>
         ))}
 
+        {enlace ? (
+          <Button asChild className="mt-6 w-full">
+            {/* `noopener noreferrer` porque va a un dominio externo. */}
+            <a href={enlace.href} target="_blank" rel="noopener noreferrer">
+              {enlace.texto}
+            </a>
+          </Button>
+        ) : null}
+
         <Button
           ref={botonRef}
           type="button"
-          className="mt-6 w-full"
+          variant={enlace ? "outline" : "default"}
+          className={enlace ? "mt-2 w-full" : "mt-6 w-full"}
           onClick={onClose}
         >
           {textoCerrar}
