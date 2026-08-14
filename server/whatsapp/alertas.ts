@@ -69,7 +69,14 @@ export function alertarReservaRechazada(info: ReservaRechazadaInfo): void {
 
   void sendWhatsAppSelf(texto)
     .then((r) => {
-      if (!r.ok) {
+      if (r.ok) {
+        // Loguear también el éxito, con el id: al número del dueño le llegan
+        // además las confirmaciones de barbero, y sin este renglón no hay forma
+        // de saber cuál de todos los mensajes salientes fue una alerta.
+        console.info(
+          `[security] alerta_dueño_enviada motivo=${info.motivo} suprimidos=${suprimidos} providerId=${r.providerId ?? "-"}`
+        );
+      } else {
         console.warn(
           `[security] alerta_dueño_fallo motivo=${info.motivo} detalle=${r.detail ?? "-"}`
         );

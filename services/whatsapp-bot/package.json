@@ -9,6 +9,17 @@
     "dev": "tsx src/server.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
+  "//baileys": [
+    "PIN EXACTO A PROPOSITO. NO le pongas caret (^) ni corras `npm update`.",
+    "Existe una 6.17.16 publicada (marzo 2025) que es semver MAYOR que la 6.7.24",
+    "(julio 2026) pero 17 meses mas vieja: en su momento probaron otro esquema de",
+    "numeracion y despues volvieron a 6.7.x. Con `^6.7.24` npm resuelve a 6.17.16",
+    "y te comes un downgrade silencioso que pierde todos los fixes de los",
+    "incidentes documentados en CLAUDE.md.",
+    "El dist-tag `latest` apunta a 7.0.0-rc14, un release candidate: no subir sin",
+    "un motivo concreto. El 6.x sigue mantenido (6.7.24 y rc14 se publicaron el",
+    "mismo dia). El dist-tag estable de esta rama es `legacy`."
+  ],
   "dependencies": {
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "6.7.24",

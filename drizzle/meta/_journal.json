@@ -43,6 +43,13 @@
       "when": 1783031556609,
       "tag": "0005_recordatorio_3h_rename",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786666615786,
+      "tag": "0006_powerful_the_professor",
+      "breakpoints": true
     }
   ]
 }

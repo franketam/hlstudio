@@ -117,6 +117,101 @@ Mientras no esté verificado, mantener `RESEND_FROM_EMAIL=onboarding@resend.dev`
 - **Cancel token**: HMAC-SHA256 con `CANCEL_TOKEN_SECRET`, verificación con `timingSafeEqual` (`lib/cancel-token.ts`).
 - **Logs de seguridad** con prefijo `[security]` (rate limit hits, login failures, cancel token inválido). Visibles en Coolify logs para auditar.
 
+## Validación de teléfono contra WhatsApp (ago-2026)
+
+El formulario público aceptaba cualquier teléfono, así que los turnos falsos
+entraban solos. Ahora, **para clientes nuevos**, se valida contra el directorio
+de WhatsApp antes de escribir nada en la base.
+
+- Endpoint `POST /exists` en el bot (`onWhatsApp`), cacheado con TTLs
+  asimétricos: **24h los positivos, 15 min los negativos**. Un negativo mal
+  resuelto se auto-corrige rápido. **No sacar el caché**: sin él una oleada se
+  traduce 1:1 en consultas al directorio desde una cuenta no oficial, que es
+  como te ganás un ban.
+- **Solo clientes nuevos.** Al que ya reservó no se lo revalida; el caso "se
+  equivocó tipeando" queda cubierto igual, porque un número mal tipeado no está
+  en la base.
+- **Falla abierto.** Bot caído, sin parear o timeout de 4s → la reserva pasa y
+  queda `[security] chequeo_whatsapp_indeterminado`. Si eso aparece seguido, la
+  validación está apagada de hecho. Convertir un hipo del bot en una caída del
+  formulario sale más caro que dejar entrar un turno falso.
+- **Al cliente no se le dice qué falló.** Los dos motivos (sin WhatsApp /
+  formato inválido) colapsan en `reserva_rechazada` con mensaje genérico
+  (`ERROR_RESERVA_RECHAZADA` en `server/actions/booking.ts`). Decirle cuál falló
+  es explicarle qué evadir. Contrapartida asumida: el cliente legítimo que
+  tipea mal tampoco recibe la pista, por eso el modal lo empuja a escribir por
+  WhatsApp o pasar por el local.
+- El detalle le llega al dueño por WhatsApp (`POST /notify-self`), con
+  **throttle de 10 min** y conteo de suprimidos (`server/whatsapp/alertas.ts`).
+  Sin el throttle, una oleada de 200 intentos serían 200 mensajes en su teléfono
+  y el aviso se volvería el ataque.
+
+### Forense: IP y navegador por turno
+
+`turnos.creado_ip`, `creado_user_agent` y `origen` ('publico' | 'admin'). Sin
+esto no se puede distinguir "muchas personas" de "una sola rotando IP con datos
+móviles". `lib/request-info.ts` arma además una etiqueta corta del navegador y
+marca `sospechoso` si el user-agent tiene firma de automatización (curl, python,
+headless…). **El user-agent lo declara el cliente y se falsifica en una línea**:
+sirve para agrupar, no como prueba.
+
+`turnos.creado_ip` es dato personal (Ley 25.326): no exponerlo fuera del panel
+admin ni mandarlo en notificaciones.
+
+Líneas de log útiles (visibles en Coolify, sin abrir la base):
+
+```
+[turno] creado turnoId=… origen=publico tel=… ip=… navegador="Chrome 141 · Android"
+[security] telefono_sin_whatsapp tel=… ip=… navegador="…" sospechoso=si
+[security] alerta_dueño_enviada motivo=… suprimidos=N providerId=…
+```
+
+Ese `providerId` importa: al número del dueño le llegan también las
+confirmaciones de barbero, así que sin él no se distingue cuál de los mensajes
+salientes fue una alerta.
+
+```sql
+-- ¿Una persona o muchas? Agrupar por IP.
+select creado_ip, count(*), count(distinct cliente_id)
+from turnos where created_at > now() - interval '7 days' and origen = 'publico'
+group by 1 order by 2 desc limit 20;
+```
+
+## Baileys: no actualizar, y NUNCA ponerle caret al pin
+
+Estamos en `6.7.24` (jul-2026), pin **exacto** a propósito.
+
+- Existe una **`6.17.16`** publicada en **marzo de 2025**: semver mayor, 17 meses
+  más vieja. Probaron otro esquema de numeración y volvieron a 6.7.x. Con
+  `^6.7.24` npm resuelve a `6.17.16` → downgrade silencioso que pierde todos los
+  fixes de los incidentes de arriba. Es legítima (la publicó `purpshell`,
+  maintainer), no es un ataque — pero el efecto es el mismo.
+- El dist-tag `latest` apunta a **`7.0.0-rc14`**, un release candidate. No subir
+  sin un motivo concreto. El 6.x sigue mantenido: `6.7.24` y `rc14` salieron el
+  mismo día. El tag estable de esta rama es **`legacy`**.
+- El warning `Cannot find package 'link-preview-js'` es **esperable y benigno**:
+  es un peer dependency *opcional* de Baileys, salta solo en mensajes con URL
+  (los `confirmacion_cliente`, que llevan el link de cancelación) y el mensaje
+  sale igual, sin tarjeta de previsualización. No vale una dependencia.
+
+### Redeploy del bot: stop → deploy, nunca deploy solo
+
+Coolify tiene healthcheck y levanta el contenedor nuevo **antes** de bajar el
+viejo. Como los dos usan las mismas credenciales, WhatsApp expulsa a uno con
+`conflict/replaced (440)` y el bot entra en backoff de 60s. Se recupera solo,
+pero durante ese minuto la validación está apagada — y tener dos instancias
+peleándose por la misma sesión Signal es justo lo que dispara los incidentes de
+descifrado documentados arriba.
+
+```sh
+ssh venturebyte "coolify stop <bot>"
+ssh venturebyte "coolify deploy <bot>"
+```
+
+Ojo con los nombres: `coolify deploy hlstudio` es **ambiguo** (matchea la app y
+el bot). Para la app usar el uuid `s84s00wgc0c0w4wocwg4kok4`; el bot responde a
+`hlstudio-bot`.
+
 ## Anti-doble-booking
 
 Decisión: validación a nivel server (transacción + check) en Sprint 1.

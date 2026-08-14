@@ -163,7 +163,7 @@ export async function sendWhatsApp(input: SendWaInput): Promise<SendWaResult> {
  */
 export async function sendWhatsAppSelf(
   text: string
-): Promise<{ ok: boolean; detail?: string }> {
+): Promise<{ ok: boolean; providerId?: string | null; detail?: string }> {
   const url = (process.env.WHATSAPP_BOT_URL ?? "").trim();
   if (!url) return { ok: false, detail: "no_bot_url" };
 
@@ -186,7 +186,17 @@ export async function sendWhatsAppSelf(
     if (!res.ok) {
       return { ok: false, detail: `bot ${res.status}: ${await safeText(res)}` };
     }
-    return { ok: true };
+
+    // Devolvemos el messageId para poder loguearlo: sin él, un aviso enviado no
+    // se distingue en los logs del bot de cualquier otro mensaje al mismo
+    // número (confirmaciones al barbero, que van al mismo destinatario).
+    let body: { messageId?: string | null } = {};
+    try {
+      body = (await res.json()) as typeof body;
+    } catch {
+      // 2xx sin JSON parseable: el mensaje salió, solo perdemos el id.
+    }
+    return { ok: true, providerId: body.messageId ?? null };
   } catch (err) {
     clearTimeout(timer);
     return {

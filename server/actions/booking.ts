@@ -17,6 +17,7 @@ import {
   RATE_LIMITS,
   checkRateLimitForRoute,
 } from "@/lib/rate-limit";
+import { getRequestInfo } from "@/lib/request-info";
 import { checkWhatsAppExists } from "@/server/whatsapp/client";
 import { alertarReservaRechazada } from "@/server/whatsapp/alertas";
 import { sendConfirmacionEmails } from "@/server/email/send-confirmacion";
@@ -101,6 +102,12 @@ export async function createTurno(
       },
     };
   }
+
+  // Origen del request. Se resuelve temprano porque lo necesitan tanto el turno
+  // creado como los logs de los intentos rechazados — sobre todo esos, que son
+  // los que no dejan ninguna otra huella.
+  const req = await getRequestInfo();
+  const origenLog = `ip=${req.ip} navegador="${req.navegador}"${req.sospechoso ? " sospechoso=si" : ""}`;
 
   const parsed = createTurnoSchema.safeParse(input);
   if (!parsed.success) {
@@ -221,7 +228,9 @@ export async function createTurno(
   // rechazado no debe dejar filas atrás.
   const telefonoNorm = normalizarTelefonoAR(cliente.telefono);
   if (!telefonoNorm) {
-    console.warn(`[security] telefono_invalido tel=${cliente.telefono}`);
+    console.warn(
+      `[security] telefono_invalido tel=${cliente.telefono} ${origenLog}`
+    );
     alertarReservaRechazada({
       telefonoIngresado: cliente.telefono,
       nombreIngresado: cliente.nombre,
@@ -256,7 +265,7 @@ export async function createTurno(
     const wa = await checkWhatsAppExists(telefonoNorm);
     if (wa.exists === false) {
       console.warn(
-        `[security] telefono_sin_whatsapp tel=${telefonoNorm} detalle=${wa.detail ?? "-"}`
+        `[security] telefono_sin_whatsapp tel=${telefonoNorm} detalle=${wa.detail ?? "-"} ${origenLog}`
       );
       alertarReservaRechazada({
         telefonoIngresado: cliente.telefono,
@@ -355,6 +364,9 @@ export async function createTurno(
             estado: "confirmado",
             precioTotal: precioRow.precio,
             cancelToken: "pending",
+            creadoIp: req.ip,
+            creadoUserAgent: req.userAgent,
+            origen: "publico",
           })
           .returning({ id: turnos.id });
 
@@ -406,6 +418,13 @@ export async function createTurno(
 
   const turnoId = (resultado as { id: string }).id;
   const token = buildCancelToken(turnoId, inicio);
+
+  // Un renglón por turno creado. Duplica lo que ya queda en la fila de `turnos`
+  // a propósito: los logs se leen en Coolify sin abrir la base, y sirven para
+  // correlacionar un turno con los intentos rechazados que lo rodean.
+  console.info(
+    `[turno] creado turnoId=${turnoId} origen=publico tel=${telefonoNorm} inicio=${inicio.toISOString()} ${origenLog}`
+  );
 
   // Disparar emails de confirmación (cliente + barbero) sin bloquear la respuesta.
   // sendConfirmacionEmails captura sus propios errores y registra el resultado

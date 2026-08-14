@@ -433,6 +433,10 @@ export async function createTurnoAdminAction(
             precioTotal: precioRow.precio,
             estadoPago,
             cancelToken: "pending",
+            // Sin ip/user-agent: lo cargó el dueño desde el panel, no hay un
+            // navegador de cliente detrás. `origen` es lo que permite excluir
+            // estos turnos de cualquier análisis de abuso del formulario.
+            origen: "admin",
           })
           .returning({ id: turnos.id });
 
@@ -481,6 +485,10 @@ export async function createTurnoAdminAction(
   }
 
   const turnoId = (resultado as { id: string }).id;
+
+  console.info(
+    `[turno] creado turnoId=${turnoId} origen=admin tel=${telefonoNorm} inicio=${inicio.toISOString()}`
+  );
 
   // 7. Notificación al barbero (solo si tiene email y el turno es futuro).
   // El cliente NO recibe email: lo notifica el dueño en persona / teléfono.

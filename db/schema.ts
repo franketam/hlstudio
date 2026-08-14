@@ -288,6 +288,19 @@ export const turnos = pgTable(
     referenciaPagoExterno: text("referencia_pago_externo"),
     cancelToken: text("cancel_token").notNull(),
     notas: text("notas"),
+    // Rastro de origen. Sin esto, ante una oleada de turnos falsos no hay forma
+    // de distinguir "muchas personas" de "una sola cambiando de IP con datos
+    // móviles" — que es justo la pregunta que hay que poder responder.
+    //
+    // Nullables porque los turnos anteriores a la migración 0006 no los tienen,
+    // y porque el flow admin no tiene navegador del cliente detrás.
+    //
+    // Ojo: `creado_ip` es dato personal (Ley 25.326). No exponerlo fuera del
+    // panel admin ni mandarlo en notificaciones.
+    creadoIp: text("creado_ip"),
+    creadoUserAgent: text("creado_user_agent"),
+    /** 'publico' (formulario web) | 'admin' (carga manual desde el panel). */
+    origen: text("origen").notNull().default("publico"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -305,6 +318,8 @@ export const turnos = pgTable(
       t.inicioTs
     ),
     estadoIdx: index("turnos_estado_idx").on(t.estado),
+    // Para las queries forenses "qué entró en las últimas N horas".
+    createdAtIdx: index("turnos_created_at_idx").on(t.createdAt),
     cancelTokenUnique: uniqueIndex("turnos_cancel_token_unique").on(
       t.cancelToken
     ),
