@@ -74,6 +74,34 @@ npm run dev
    Esos `.mjs` se generan en build-time con esbuild (bundle autosuficiente, sin tsx ni tsconfig).
    No usar `npm run db:migrate` en runtime: requiere tsx (devDep) que no está en la imagen final.
 
+### Deploys con migración: la migración va PRIMERO
+
+Si el código nuevo escribe o lee algo que la migración todavía no creó, entre
+que el contenedor nuevo toma tráfico y que vos corrés `migrate.mjs` **todas las
+reservas fallan**. Con el local abierto eso son turnos perdidos.
+
+El problema es que la imagen vieja no tiene el `.sql` nuevo — se bakea en build.
+La salida es copiárselo al contenedor que está corriendo y aplicarlo ahí. Las
+migraciones aditivas (columnas nullable / con default, tablas nuevas) son
+invisibles para el código viejo, así que no rompen nada mientras tanto:
+
+```sh
+CT=$(ssh venturebyte "docker ps --format '{{.Names}}' | grep <uuid-app>")
+cat drizzle/000X_*.sql        | ssh venturebyte "docker exec -i $CT sh -c 'cat > /app/drizzle/000X_*.sql'"
+cat drizzle/meta/_journal.json | ssh venturebyte "docker exec -i $CT sh -c 'cat > /app/drizzle/meta/_journal.json'"
+ssh venturebyte "docker exec $CT node scripts/migrate.mjs"
+# verificar, y recién ahí: git push && coolify deploy
+```
+
+Drizzle matchea por hash del `.sql`, así que cuando la imagen nueva arranca ve
+la migración como ya aplicada y la saltea. Se usó dos veces (0006 y 0007) sin
+una sola reserva caída.
+
+**Ojo con los nombres**: `coolify deploy hlstudio` es **ambiguo**, matchea la app
+y el bot. Para la app usar el uuid `s84s00wgc0c0w4wocwg4kok4`; el bot responde a
+`hlstudio-bot`. La base es el contenedor `g8w4gc08cgc0o4w8ccgg04sw`, base
+`postgres` (no `hlstudio`).
+
 ## Convenciones
 
 - **Server Components por default.** `"use client"` solo donde hay interactividad real.
@@ -109,124 +137,114 @@ Mientras no esté verificado, mantener `RESEND_FROM_EMAIL=onboarding@resend.dev`
 ## Hardening de seguridad
 
 - **Rate limiting** in-memory por IP en endpoints públicos (`lib/rate-limit.ts`):
-  - `reservar` (create turno): 5 / IP / hora.
+  - `reservar` (create turno): **2 / IP / hora** (bajado de 5 en ago-2026).
   - `login` (admin): 10 / IP / 15 min.
   - `cancelar` (turno): 20 / IP / hora.
   - Los límites viven como constantes en `RATE_LIMITS` en `lib/rate-limit.ts`.
+  - ⚠️ **Es in-memory por proceso**: se resetea en cada redeploy y no se comparte
+    entre réplicas. O sea que cada deploy le regala el cupo de nuevo al que está
+    abusando. Para el volumen del local alcanza, pero es la defensa más fácil de
+    evadir que hay. Moverlo a Postgres (que ya está) lo haría real.
 - **Security headers** en `next.config.ts`: X-Frame-Options DENY, X-Content-Type-Options nosniff, Referrer-Policy strict-origin-when-cross-origin, Permissions-Policy (cámara/mic/geo denegados), HSTS 1 año. CSP queda pendiente para Sprint 3 (requiere auditar inline scripts/styles de Next).
 - **Cancel token**: HMAC-SHA256 con `CANCEL_TOKEN_SECRET`, verificación con `timingSafeEqual` (`lib/cancel-token.ts`).
 - **Logs de seguridad** con prefijo `[security]` (rate limit hits, login failures, cancel token inválido). Visibles en Coolify logs para auditar.
 
-## Validación de teléfono contra WhatsApp (ago-2026)
+## Turnos falsos (ago-2026)
 
-El formulario público aceptaba cualquier teléfono, así que los turnos falsos
-entraban solos. Ahora, **para clientes nuevos**, se valida contra el directorio
-de WhatsApp antes de escribir nada en la base.
+**El caso del 14-ago**, medido con el forense: una IP (`190.15.225.6`, Chrome
+sobre Windows), **71 segundos**, 2 reservas + 2 intentos bloqueados, tres
+teléfonos distintos (dos de ellos transposición de dígitos entre sí) y nombres
+que difieren en una letra. El tercero, de Buenos Aires, **pasó el filtro**.
 
-- Endpoint `POST /exists` en el bot (`onWhatsApp`), cacheado con TTLs
-  asimétricos: **24h los positivos, 15 min los negativos**. Un negativo mal
-  resuelto se auto-corrige rápido. **No sacar el caché**: sin él una oleada se
-  traduce 1:1 en consultas al directorio desde una cuenta no oficial, que es
-  como te ganás un ban.
-- **Solo clientes nuevos.** Al que ya reservó no se lo revalida; el caso "se
-  equivocó tipeando" queda cubierto igual, porque un número mal tipeado no está
-  en la base.
-- **Falla abierto.** Bot caído, sin parear o timeout de 4s → la reserva pasa y
-  queda `[security] chequeo_whatsapp_indeterminado`. Si eso aparece seguido, la
-  validación está apagada de hecho. Convertir un hipo del bot en una caída del
-  formulario sale más caro que dejar entrar un turno falso.
-- **Al cliente no se le dice qué falló.** Los dos motivos (sin WhatsApp /
-  formato inválido) colapsan en `reserva_rechazada` con mensaje genérico
-  (`ERROR_RESERVA_RECHAZADA` en `server/actions/booking.ts`). Decirle cuál falló
-  es explicarle qué evadir. Contrapartida asumida: el cliente legítimo que
-  tipea mal tampoco recibe la pista, por eso el modal lo empuja a escribir por
-  WhatsApp o pasar por el local.
-- El detalle le llega al dueño por WhatsApp (`POST /notify-self`), con
-  **throttle de 10 min** y conteo de suprimidos (`server/whatsapp/alertas.ts`).
-  Sin el throttle, una oleada de 200 intentos serían 200 mensajes en su teléfono
-  y el aviso se volvería el ataque.
+1. El chequeo prueba que el número **existe**, no que sea **suyo**.
+2. Por eso se bloquean IP + email + teléfono **juntos**: rotó tres teléfonos
+   desde una sola IP.
+3. Cada reserva falsa con el número de un tercero manda hasta 3 mensajes no
+   solicitados que nadie responde — el vector de ban de WhatsApp más fuerte.
 
-### Lista negra y límites (Nivel 1, ago-2026)
+Mismo día, alguien reservó las 17:30 con los dos barberos: de ahí el límite de un
+turno por franja.
 
-`server/actions/anti-abuso.ts`. Todo aplica **solo al flow público**; el admin
+**Pendientes**
+
+- [ ] Probar la UI de admin (*Bloquear* en la agenda, `/admin/config/bloqueos-acceso`) — nunca se ejercitó, requiere sesión.
+- [ ] Verificar el dominio en Resend (checklist arriba).
+- [ ] Handle de Instagram — TODO abierto desde el brief.
+- [ ] Rate limit a Postgres (ver Hardening).
+
+**Escalada acordada, en orden**
+
+1. **Confirmación por respuesta de WhatsApp** — turno `pendiente` hasta que
+   responda "SÍ". Prueba que **controla** el número. Además *baja* el riesgo de
+   ban: 1 mensaje a un desconocido en vez de 3, y mejora la tasa de respuesta.
+2. **Aprobación manual de clientes nuevos** — ~3/día. El aviso va al número
+   pareado, o sea cero riesgo de ban.
+3. **Seña con MercadoPago** — fija y chica, no 50%, y solo para clientes sin
+   historial.
+
+**Descartados** (no volver a proponerlos): **SMS OTP** (Argentina no soporta
+remitente alfanumérico — llega de un número extranjero desconocido, ~USD 15/mes
+por un mensaje que se ignora) · **CAPTCHA** (es una persona, no un script) ·
+**MAC address** (no viaja por internet, no es visible desde el server) ·
+**fingerprinting** (falsos positivos y Ley 25.326).
+
+### Defensas activas
+
+Todo aplica **solo al flow público** (`server/actions/anti-abuso.ts`); el admin
 puede seguir cargando turnos a mano para cualquiera.
 
-- **`bloqueos_acceso`** — tabla por identificador (`ip` | `email` | `telefono`),
-  no columnas en `clientes`: la IP es del intento, no del cliente, y el abusador
-  genera un `cliente` nuevo por cada teléfono que inventa. Unique `(tipo, valor)`;
-  re-bloquear reactiva la fila en vez de duplicar. `activo=false` al desbloquear
-  para no perder el historial.
-  - **La normalización tiene que ser idéntica al escribir y al leer**
-    (`normalizarValorBloqueo`): teléfono en E.164, email e IP en minúsculas. Si
-    divergen, el bloqueo no matchea nunca y falla en silencio — el peor modo de
-    fallar, porque parece puesto y no hace nada.
-- **Tope de 3 turnos activos** por cliente (`MAX_TURNOS_ACTIVOS`).
-- **Un solo turno por franja** por cliente. El caso real fue una persona
-  reservando el mismo horario con los dos barberos, 50 segundos de diferencia.
-- **Rate limit 2/IP/hora** (bajado de 5). El caso que lo motivó hizo 2 reservas
-  + 2 intentos rechazados en 71 segundos y pasó cómodo bajo el límite viejo.
+1. **Número con cuenta de WhatsApp** — `POST /exists` en el bot (`onWhatsApp`),
+   solo para clientes nuevos.
+2. **Teléfono normalizable a E.164** (el flow admin conserva el fallback laxo).
+3. **Rate limit 2/IP/hora**, **3 turnos activos** por cliente, **1 turno por
+   franja**.
+4. **Lista negra** `bloqueos_acceso` por identificador (`ip`|`email`|`telefono`),
+   unique `(tipo,valor)` con upsert que reactiva; `activo=false` al desbloquear.
 
-**Los cinco rechazos anti-abuso devuelven el MISMO `reserva_rechazada`**: rate
-limit, teléfono no normalizable, sin WhatsApp, lista negra y topes por cliente.
-Es deliberado y no hay que "arreglarlo":
+**Las cinco devuelven el MISMO `reserva_rechazada` genérico. Es deliberado, no
+lo "arregles".** Un mensaje distinguible le dice al que prueba cuál activó y qué
+cambiar; el "demasiados intentos" era el peor porque invitaba a medir la ventana.
+La opacidad es solo hacia el cliente: los logs distinguen cada motivo con IP y
+navegador. El modal ofrece un botón a WhatsApp (`WHATSAPP_CONTACTO` en
+`lib/constants.ts`, el mismo número pareado) porque el cliente legítimo que topea
+una defensa tampoco entiende por qué.
 
-- Un mensaje distinguible por defensa le dice al que prueba **cuál** activó y,
-  por lo tanto, qué cambiar. El "demasiados intentos" era el peor: confirma que
-  hay un límite e invita a medir la ventana esperando y reintentando.
-- Con la respuesta unificada no puede separar "me limitaron" de "el dato estaba
-  mal".
-- El mensaje **no afirma nada falso**: no dice qué falló, pero tampoco sugiere
-  que el turno pueda haber quedado agendado (en los rechazos nunca se crea). Se
-  probó esa variante y se descartó: le ahorraba información al que abusa, pero
-  mandaba clientes reales al local a un turno inexistente.
-- La contrapartida sigue siendo real: el cliente legítimo que topea el límite no
-  entiende por qué. Por eso el modal ofrece un botón directo a WhatsApp
-  (`WHATSAPP_CONTACTO` en `lib/constants.ts`, el mismo número con el que está
-  pareado el bot), con texto prellenado para que la consulta llegue con contexto.
-- **La opacidad es solo para el cliente.** Los logs sí distinguen cada motivo
-  (`[security] rate_limited`, `telefono_sin_whatsapp`, `intento_de_bloqueado`,
-  `limite_cliente`) con IP y navegador.
+**Trampas que cuestan caro:**
 
-Solo el de lista negra dispara alerta al dueño (significa que el bloqueado
-volvió); los topes y el rate limit no, porque suelen ser un cliente real
-pasándose y sería ruido.
+- **Falla abierto**: bot caído/sin parear/timeout 4s → la reserva pasa y queda
+  `[security] chequeo_whatsapp_indeterminado`. Si aparece seguido, la validación
+  está apagada de hecho. Romper el formulario sale más caro que un turno falso.
+- **No sacar el caché de `/exists`** (24h positivos / 15 min negativos,
+  asimétrico a propósito): sin él una oleada son consultas 1:1 al directorio.
+- **La normalización de `bloqueos_acceso` debe ser idéntica al escribir y al
+  leer** (`normalizarValorBloqueo`). Si divergen, el bloqueo no matchea nunca y
+  falla en silencio — parece puesto y no hace nada.
+- **Throttle de 10 min en las alertas al dueño** (`server/whatsapp/alertas.ts`):
+  sin él, 200 intentos son 200 mensajes y el aviso se vuelve el ataque. Solo
+  alerta la lista negra; los topes no, serían ruido.
+- **Ojo con bloquear IPs compartidas** (wifi familiar o del local).
+- Se probó un mensaje que decía "puede haber quedado agendado" para dar
+  ambigüedad y **se descartó**: mandaba clientes reales al local a un turno
+  inexistente.
 
-**UI**: botón *Bloquear* en cada turno de la agenda — muestra teléfono, email e
-IP con checkbox y ofrece cancelar el turno en el mismo paso (sin notificar al
-cliente: avisarle al que abusa solo le dice que pruebe de otra forma).
-Administración en `/admin/config/bloqueos-acceso`.
-
-⚠️ **Cuidado con bloquear IPs compartidas** (wifi familiar, del local). La UI lo
-advierte pero la decisión es del dueño.
-
-### Forense: IP y navegador por turno
-
-`turnos.creado_ip`, `creado_user_agent` y `origen` ('publico' | 'admin'). Sin
-esto no se puede distinguir "muchas personas" de "una sola rotando IP con datos
-móviles". `lib/request-info.ts` arma además una etiqueta corta del navegador y
-marca `sospechoso` si el user-agent tiene firma de automatización (curl, python,
-headless…). **El user-agent lo declara el cliente y se falsifica en una línea**:
-sirve para agrupar, no como prueba.
-
-`turnos.creado_ip` es dato personal (Ley 25.326): no exponerlo fuera del panel
-admin ni mandarlo en notificaciones.
-
-Líneas de log útiles (visibles en Coolify, sin abrir la base):
+**Forense**: `turnos.creado_ip`, `creado_user_agent`, `origen`. `creado_ip` es
+dato personal (Ley 25.326) — no sacarlo del panel admin. El user-agent lo declara
+el cliente y se falsifica en una línea: sirve para agrupar, no como prueba.
+`lib/user-agent.ts` marca `sospechoso` ante firmas de automatización.
 
 ```
-[turno] creado turnoId=… origen=publico tel=… ip=… navegador="Chrome 141 · Android"
-[security] telefono_sin_whatsapp tel=… ip=… navegador="…" sospechoso=si
+[turno] creado turnoId=… origen=publico ip=… navegador="Chrome 141 · Android"
+[security] telefono_sin_whatsapp|intento_de_bloqueado|limite_cliente|rate_limited …
 [security] alerta_dueño_enviada motivo=… suprimidos=N providerId=…
 ```
 
-Ese `providerId` importa: al número del dueño le llegan también las
-confirmaciones de barbero, así que sin él no se distingue cuál de los mensajes
-salientes fue una alerta.
+`providerId` importa: al dueño le llegan también las confirmaciones de barbero,
+sin él no se sabe cuál saliente fue una alerta.
 
 ```sql
--- ¿Una persona o muchas? Agrupar por IP.
-select creado_ip, count(*), count(distinct cliente_id)
-from turnos where created_at > now() - interval '7 days' and origen = 'publico'
+-- ¿Una persona o muchas?
+select creado_ip, count(*), count(distinct cliente_id) from turnos
+where created_at > now() - interval '7 days' and origen = 'publico'
 group by 1 order by 2 desc limit 20;
 ```
 
