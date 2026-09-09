@@ -59,6 +59,7 @@ Sistema web de reservas para **HLstudio**, barbería de gama alta en Chivilcoy (
 |----------|----------|-------------------|-------|
 | Corte | 30 min | $16.000 | Lo hacen los dos |
 | Corte + Barba | 45 min | $18.000 | Lo hacen los dos |
+| Corte medio/largo | 60 min | $16.000 | Lo hacen los dos. Agregado sep-2026 |
 | Barba | 15 min | $7.000 | Lo hacen los dos |
 
 > Precios al 2026-05-06. **Confirmar con el cliente si son los definitivos al lanzar.**

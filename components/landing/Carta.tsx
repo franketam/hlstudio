@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { Scissors, Combine } from "lucide-react";
+import { Scissors, Combine, ScissorsLineDashed } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 type Servicio = {
@@ -26,6 +26,14 @@ const servicios: Servicio[] = [
     detalle:
       "Servicio combinado en una sola sesión. Ideal para mantener todo prolijo.",
     icon: Combine,
+  },
+  {
+    numero: "03",
+    nombre: "Corte medio/largo",
+    duracion: "60 min",
+    detalle:
+      "Para pelo con largo. Más tiempo de trabajo para definir forma, capas y terminación.",
+    icon: ScissorsLineDashed,
   },
 ];
 
@@ -66,7 +74,7 @@ export function Carta() {
         </p>
 
         {/* Grid de cards */}
-        <ul className="mx-auto mt-16 grid max-w-3xl grid-cols-1 gap-5 sm:mt-20 sm:gap-6 md:grid-cols-2">
+        <ul className="mx-auto mt-16 grid max-w-5xl grid-cols-1 gap-5 sm:mt-20 sm:gap-6 md:grid-cols-3">
           {servicios.map((s) => {
             const Icon = s.icon;
             return (
