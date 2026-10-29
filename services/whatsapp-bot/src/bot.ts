@@ -6,7 +6,11 @@ import {
   fetchLatestBaileysVersion,
   areJidsSameUser,
   jidDecode,
+  isJidGroup,
+  getBinaryNodeChild,
+  getBinaryNodeChildren,
   proto,
+  type BinaryNode,
   type WASocket,
   type ConnectionState,
   type WAMessage,
@@ -193,6 +197,14 @@ export class WhatsAppBot {
   // acá son el eco multi-dispositivo de los chats que Hugo maneja a mano: el
   // bot no los usa para nada y no puede descifrarlos.
   private selfJids: string[] = [];
+
+  // Reenvíos ya hechos por `<msgId>:<dispositivo>` en el chat propio. Tope para
+  // no entrar en loop si el teléfono sigue sin poder descifrar (ver
+  // handleSelfChatRetry).
+  private readonly selfRetryCounts = new TtlCache(
+    MSG_RETRY_TTL_MS,
+    MSG_RETRY_MAX_ENTRIES
+  );
 
   // Users (teléfono o LID) cuya sesión Signal dio evidencia de estar rancia,
   // porque pidieron reenvío de un mensaje nuestro. Se limpia su sesión en el
@@ -444,6 +456,14 @@ export class WhatsAppBot {
       }
     });
 
+    // Pedidos de reenvío del chat propio ("Tú"): Baileys los descarta por
+    // `shouldIgnoreJid`, así que los atendemos acá. Escucha la stanza cruda en
+    // paralelo al handler de Baileys, que igual la ackea.
+    sock.ws.on("CB:receipt", (node: BinaryNode) => {
+      if (gen !== this.generation) return;
+      void this.handleSelfChatRetry(sock, node);
+    });
+
     // No usamos los mensajes entrantes, pero registramos el handler para que
     // baileys no buffer-ee indefinidamente.
     sock.ev.on("messages.upsert", (m: { messages: WAMessage[] }) => {
@@ -483,6 +503,78 @@ export class WhatsAppBot {
         );
       }
     });
+  }
+
+  /**
+   * Responde los pedidos de reenvío de los mensajes que el bot se manda a sí
+   * mismo (avisos y confirmaciones de Hugo, que es el número pareado).
+   *
+   * `shouldIgnoreJid` filtra la cuenta propia y `handleReceipt` de Baileys usa
+   * el mismo predicado: ackea el recibo y corta ANTES de mirar si es un
+   * `retry`. En el resto de los chats el reenvío anda; en el chat "Tú" el
+   * teléfono pedía reenvío, nadie contestaba y el mensaje quedaba para siempre
+   * en "Esperando el mensaje" (28-oct-2026: cero acuses en 405 envíos a sí
+   * mismo, ni siquiera de los que Hugo sí llegó a leer).
+   *
+   * Replica `sendMessagesAgain` de Baileys 6.7.24 (no lo exporta): fuerza
+   * sesión nueva con el dispositivo que pidió y le re-releva el mensaje.
+   */
+  private async handleSelfChatRetry(sock: WASocket, node: BinaryNode): Promise<void> {
+    const { attrs } = node;
+    if (attrs.type !== "retry") return;
+
+    // Mismo cálculo de remoteJid que `handleReceipt`: solo nos toca lo que
+    // Baileys descarta, el resto lo reenvía él.
+    const participant = attrs.participant || attrs.from;
+    if (!participant) return;
+    const fromSelf = this.isSelfJid(participant);
+    const remoteJid = !fromSelf || isJidGroup(attrs.from) ? attrs.from : attrs.recipient;
+    if (!remoteJid || !this.isSelfJid(remoteJid)) return;
+
+    const ids = [attrs.id];
+    if (Array.isArray(node.content)) {
+      const items = getBinaryNodeChildren(node.content[0], "item");
+      ids.push(...items.map((i) => i.attrs.id));
+    }
+    const retryNode = getBinaryNodeChild(node, "retry");
+
+    try {
+      // Sin dispositivo = el teléfono principal: se reenvía a todos los
+      // dispositivos, como hace Baileys.
+      const sendToAll = !jidDecode(participant)?.device;
+      await sock.assertSessions([participant], true);
+
+      for (const id of ids) {
+        if (!id) continue;
+        const msg = this.sentMessages.get(id);
+        const countKey = `${id}:${participant}`;
+        const count = this.selfRetryCounts.get<number>(countKey) ?? 0;
+        if (!msg || count >= MAX_MSG_RETRY_COUNT) {
+          logger.info(
+            { msgId: id, participant, cacheHit: Boolean(msg), count },
+            "[wa] retry del chat propio, no se reenvía"
+          );
+          continue;
+        }
+        this.selfRetryCounts.set(countKey, count + 1);
+        await sock.relayMessage(
+          remoteJid,
+          msg,
+          sendToAll
+            ? { messageId: id, useUserDevicesCache: false }
+            : {
+                messageId: id,
+                participant: { jid: participant, count: Number(retryNode?.attrs.count ?? 1) },
+              }
+        );
+        logger.info(
+          { msgId: id, participant, sendToAll, intento: count + 1 },
+          "[wa] retry del chat propio, reenviado"
+        );
+      }
+    } catch (err) {
+      logger.warn({ ids, participant, err }, "[wa] retry del chat propio fallo");
+    }
   }
 
   private scheduleReconnect(delayMs: number): void {

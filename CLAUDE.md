@@ -333,6 +333,13 @@ Tres cosas que quedaron en `bot.ts` y conviene no revertir sin entender:
   la cola offline drena. No ampliarlo a terceros: los acuses de entrega
   (`handleReceipt`) usan el mismo predicado y son la única señal de si al
   cliente le llegó el mensaje.
+  **Efecto colateral (oct-2026):** ese mismo filtro hace que Baileys descarte
+  los pedidos de reenvío del chat propio ("Tú"), donde le llegan a Hugo los
+  avisos y sus confirmaciones de barbero. Quedaban para siempre en "Esperando
+  el mensaje". `handleSelfChatRetry` escucha `CB:receipt` y reenvía solo ese
+  caso. Si se sube Baileys o se toca `shouldIgnoreJid`, revisar que siga
+  haciendo falta. Ojo: el bot no ve acuses del chat propio, así que ahí
+  `messages.update` nunca sirve para medir entrega.
 - El caché de enviados (`getMessage`) se **persiste en disco** dentro del
   `AUTH_DIR`, como protobuf en base64. En memoria sola, cada redeploy dejaba
   trabados en "Esperando este mensaje" a los destinatarios pendientes.
