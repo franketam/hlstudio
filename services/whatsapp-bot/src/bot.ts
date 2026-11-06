@@ -344,12 +344,22 @@ export class WhatsAppBot {
         // también la ÚNICA evidencia confiable de que la sesión con ese
         // contacto quedó rancia, así que la anotamos para limpiarla en el
         // próximo envío (ver sendText).
-        const staleUser = jidDecode(key?.remoteJid ?? undefined)?.user;
+        //
+        // `remoteJid` es el CHAT, no quien pide. Si pide un dispositivo de la
+        // propia cuenta (la copia que le llega a Hugo de cada mensaje), la
+        // sesión con el cliente no tiene nada que ver: marcarla borraba
+        // sesiones sanas en más de la mitad de los envíos (nov-2026).
+        const pedidoPropio = this.isSelfJid(key?.participant ?? undefined);
+        const staleUser = pedidoPropio
+          ? undefined
+          : jidDecode(key?.remoteJid ?? undefined)?.user;
         if (staleUser) this.staleSessions.add(staleUser);
         logger.info(
           {
             msgId: id,
             remoteJid: key?.remoteJid,
+            participant: key?.participant,
+            pedidoPropio,
             cacheHit: Boolean(found),
             marcadoRancio: Boolean(staleUser),
           },
@@ -461,6 +471,7 @@ export class WhatsAppBot {
     // paralelo al handler de Baileys, que igual la ackea.
     sock.ws.on("CB:receipt", (node: BinaryNode) => {
       if (gen !== this.generation) return;
+      this.logRetryReceipt(node);
       void this.handleSelfChatRetry(sock, node);
     });
 
@@ -503,6 +514,29 @@ export class WhatsAppBot {
         );
       }
     });
+  }
+
+  /**
+   * Deja registro de cada pedido de reenvío tal como llega, antes de que
+   * Baileys lo procese. Es la única forma de saber QUÉ dispositivo no pudo
+   * descifrar: `getMessage` solo ve el chat, y en el chat propio ni se llama.
+   */
+  private logRetryReceipt(node: BinaryNode): void {
+    const { attrs } = node;
+    if (attrs.type !== "retry") return;
+    const pide = attrs.participant || attrs.from;
+    logger.info(
+      {
+        msgId: attrs.id,
+        from: attrs.from,
+        participant: attrs.participant,
+        recipient: attrs.recipient,
+        pedidoPropio: this.isSelfJid(pide),
+        retry: getBinaryNodeChild(node, "retry")?.attrs,
+        traeClaves: Boolean(getBinaryNodeChild(node, "keys")),
+      },
+      "[wa] retry recibido"
+    );
   }
 
   /**

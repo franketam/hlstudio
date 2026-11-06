@@ -357,6 +357,12 @@ el mensaje entrega a 2 dispositivos y un tercero pide reenvío (lo cubre el
 caché); tras la renegociación reactiva, 3 acuses de entrega y **cero** pedidos
 de reenvío.
 
+**`remoteJid` en `getMessage` es el chat, no quien pide.** Cada mensaje del bot
+lleva una copia para el celular de Hugo, y si esa copia falla el pedido llega con
+el chat del cliente. Para atribuir un reenvío mirar `[wa] retry recibido`
+(`participant`/`from`, `pedidoPropio`), no contar `getMessage` por cliente. Un
+pedido propio no marca al cliente como rancio.
+
 **Ojo con el diagnóstico**: que un `getMessage` dé `cacheHit:false` NO implica
 que el bot haya fallado. WhatsApp le pide a cualquier dispositivo vinculado que
 reponga mensajes de la cuenta, incluidos los que un humano mandó desde WhatsApp
